@@ -1,0 +1,36 @@
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Frontend / Node
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Postgres / Local data volumes
+pgdata/
+*.sqlite
+*.db

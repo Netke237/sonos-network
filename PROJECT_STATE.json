@@ -1,0 +1,35 @@
+{
+  "project": "sonos-network",
+  "repo": "Netke237/sonos-network",
+  "active_phase": "PHASE-1-CORE-PLATFORM",
+  "audit_rule": {
+    "max_rounds_per_stage": 3,
+    "gate_criteria": [
+      "Wrong RF/Sonos/Wi-Fi metric displayed to user (dBm, ANI, PHY err/s, STP cost, BSSID/AP attribution)",
+      "Corrupted persisted PostgreSQL data",
+      "Violation of domain invariants in AGENTS.md / GLOSSARY.md / docs/adr/",
+      "Comment or doc that misstates technical mechanism"
+    ]
+  },
+  "phases": [
+    {
+      "id": "PHASE-1-CORE-PLATFORM",
+      "title": "Always-On Home Wi-Fi & Sonos Network Intelligence Platform (Backend + PC/Web Frontend on Mini PC)",
+      "status": "not_started",
+      "plan_audit_rounds": 0,
+      "plan_audit_clean": false,
+      "code_audit_rounds": 0,
+      "audit_clean": false,
+      "rounds": []
+    }
+  ],
+  "task_backlog": {
+    "items": [
+      {
+        "id": "PHASE-2-ANDROID-APP",
+        "title": "Native Android Room Scanner & Topology Companion App",
+        "status": "backlog"
+      }
+    ]
+  }
+}
