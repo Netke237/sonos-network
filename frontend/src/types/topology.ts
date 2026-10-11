@@ -193,3 +193,86 @@ export interface HouseholdSonosSnapshot {
   mesh_links: unknown[];
 }
 
+export type EdgeLayer = "WIRED_LAN" | "WIFI_INFRA" | "SONOS_MESH";
+
+export type TopologyLayerFilter =
+  | "ALL"
+  | "WIFI_VLAN"
+  | "SONOS_STP"
+  | "WIRED_LAN"
+  | "WIFI_INFRA"
+  | "SONOS_MESH";
+
+export interface TopologyNode {
+  id: string;
+  device_id?: string | null;
+  slug: string;
+  name: string;
+  device_role: DeviceRole;
+  model_name: string;
+  ip_address?: string | null;
+  base_mac?: string | null;
+  rincon_uuid?: string | null;
+  room_id?: string | null;
+  room_slug?: string | null;
+  room_name?: string | null;
+  floor_id?: string | null;
+  floor_slug?: string | null;
+  floor_name?: string | null;
+  connection_mode?: ConnectionMode | null;
+  health_grade: HealthGrade;
+  ofdm_ani_level?: number | null;
+  noise_floor_dbm?: number | null;
+  phy_error_rate?: number | null;
+  stp_path_cost?: number | null;
+  designated_root?: string | null;
+  is_stp_root?: boolean;
+  is_ghost_group?: boolean;
+  rssi_dbm?: number | null;
+  ap_channels?: string | null;
+  switch_port_number?: number | null;
+  x: number;
+  y: number;
+  pos_x: number;
+  pos_y: number;
+}
+
+export interface DeviceConnectionEdge {
+  id: string;
+  layer: EdgeLayer;
+  source: string;
+  source_id: string;
+  source_slug: string;
+  source_name: string;
+  target: string;
+  target_id: string;
+  target_slug: string;
+  target_name: string;
+  label: string;
+  is_forwarding: boolean;
+  line_style: "solid" | "dashed" | string;
+  stp_state?: string | null;
+  band?: string | null;
+  channel?: number | null;
+  from_db?: number | null;
+  to_db?: number | null;
+  rssi_dbm?: number | null;
+  link_speed_mbps?: number | null;
+  port_number?: number | null;
+  vlan_label?: string | null;
+  health_grade: HealthGrade;
+}
+
+export interface TopologyGraphResponse {
+  layer_filter: string;
+  floor_slug?: string | null;
+  room_slug?: string | null;
+  include_blocking: boolean;
+  designated_stp_root: string;
+  total_nodes: number;
+  total_edges: number;
+  nodes: TopologyNode[];
+  edges: DeviceConnectionEdge[];
+}
+
+

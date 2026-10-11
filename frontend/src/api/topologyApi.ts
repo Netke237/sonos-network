@@ -8,6 +8,7 @@ import type {
   NetworkDevice,
   Room,
   SwitchPort,
+  TopologyGraphResponse,
   WiFiRoomSurvey,
 } from "../types/topology";
 
@@ -23,6 +24,33 @@ export async function fetchHouseOverview(
   const resp = await fetch(`${API_BASE}/api/overview${query}`);
   if (!resp.ok) {
     throw new Error(`Failed to load overview: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function fetchTopologyGraph(params?: {
+  layer?: string;
+  floor_slug?: string | null;
+  room_slug?: string | null;
+  include_blocking?: boolean;
+}): Promise<TopologyGraphResponse> {
+  const search = new URLSearchParams();
+  if (params?.layer) {
+    search.set("layer", params.layer);
+  }
+  if (params?.floor_slug) {
+    search.set("floor_slug", params.floor_slug);
+  }
+  if (params?.room_slug) {
+    search.set("room_slug", params.room_slug);
+  }
+  if (params?.include_blocking !== undefined) {
+    search.set("include_blocking", String(params.include_blocking));
+  }
+  const qs = search.toString() ? `?${search.toString()}` : "";
+  const resp = await fetch(`${API_BASE}/api/topology${qs}`);
+  if (!resp.ok) {
+    throw new Error(`Failed to load topology graph: ${resp.status}`);
   }
   return resp.json();
 }

@@ -11,6 +11,7 @@ import {
   flushGhostGroups,
   pollLiveSonosNow,
 } from "./api/topologyApi";
+import { TopologyGraphView } from "./components/TopologyGraphView";
 import type {
   BssidClassification,
   ConnectionMode,
@@ -45,6 +46,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [includeArchived, setIncludeArchived] = useState<boolean>(false);
   const [crudOpen, setCrudOpen] = useState<boolean>(false);
+  const [activeViewTab, setActiveViewTab] = useState<"MATRIX" | "GRAPH">("MATRIX");
   const [selectedRoom, setSelectedRoom] = useState<RoomMatrixItem | null>(null);
   const [roomSurveys, setRoomSurveys] = useState<WiFiRoomSurvey[]>([]);
   const [actionBanner, setActionBanner] = useState<string | null>(null);
@@ -749,21 +751,74 @@ export default function App() {
         </section>
       )}
 
+      {/* Top-Level Dual Representation View Tabs */}
+      <nav
+        aria-label="Primary View Navigation"
+        style={{
+          display: "flex",
+          gap: "10px",
+          marginBottom: "20px",
+          flexWrap: "wrap",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setActiveViewTab("MATRIX")}
+          style={{
+            backgroundColor: activeViewTab === "MATRIX" ? "#0284c7" : "#1e293b",
+            color: "#f8fafc",
+            border: "1px solid #38bdf8",
+            borderRadius: "8px",
+            padding: "8px 16px",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          Floor &amp; Room Coverage Matrix
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveViewTab("GRAPH")}
+          style={{
+            backgroundColor: activeViewTab === "GRAPH" ? "#0284c7" : "#1e293b",
+            color: "#f8fafc",
+            border: "1px solid #38bdf8",
+            borderRadius: "8px",
+            padding: "8px 16px",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          Interactive Network Topology Graph
+        </button>
+      </nav>
+
       {loading && <p>Loading house topology...</p>}
       {error && <p style={{ color: "#f87171" }}>Error: {error}</p>}
 
-      {/* Floor-by-Floor Room Matrix */}
-      <main style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-        {sortedFloors.map((floor) => (
-          <section
-            key={floor.id}
-            style={{
-              backgroundColor: "#1e293b",
-              borderRadius: "12px",
-              padding: "20px",
-              border: "1px solid #334155",
-            }}
-          >
+      {activeViewTab === "GRAPH" ? (
+        <TopologyGraphView
+          floors={sortedFloors}
+          onInspectRoomSlug={(roomSlug) => {
+            const targetRoom = allRooms.find((r) => r.slug === roomSlug);
+            if (targetRoom) {
+              void handleOpenRoomSurveys(targetRoom);
+            }
+          }}
+        />
+      ) : (
+        /* Floor-by-Floor Room Matrix */
+        <main style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          {sortedFloors.map((floor) => (
+            <section
+              key={floor.id}
+              style={{
+                backgroundColor: "#1e293b",
+                borderRadius: "12px",
+                padding: "20px",
+                border: "1px solid #334155",
+              }}
+            >
             <div
               style={{
                 display: "flex",
@@ -1086,7 +1141,8 @@ export default function App() {
             </div>
           </section>
         ))}
-      </main>
+        </main>
+      )}
 
       {/* Selected Room Wi-Fi Spectrum & Survey Drawer */}
       {selectedRoom && (

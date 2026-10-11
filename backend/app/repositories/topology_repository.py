@@ -20,6 +20,7 @@ from app.models.entities import (
     WiFiRoomSurvey,
 )
 from app.modules.sonos_telemetry import EXPECTED_STP_ROOT
+from app.modules.topology_graph import synthesize_unified_topology_graph
 from app.modules.wifi_omada import WiFiTelemetryPort, build_wifi_room_survey
 from app.schemas.topology import (
     BssidReadingSchema,
@@ -42,6 +43,7 @@ from app.schemas.topology import (
     SwitchPortCreate,
     SwitchPortRead,
     SwitchPortUpdate,
+    TopologyGraphResponse,
     WiFiInfraSnapshot,
     WiFiRoomSurveyCreate,
     WiFiRoomSurveySchema,
@@ -83,6 +85,13 @@ class TopologyRepositoryPort(Protocol):
     async def archive_device(self, device_id: str) -> NetworkDevice | None: ...
 
     async def get_house_overview(self, include_archived: bool = False) -> HouseOverviewDto: ...
+    async def build_unified_graph(
+        self,
+        layer_filter: str = "ALL",
+        floor_slug: str | None = None,
+        room_slug: str | None = None,
+        include_blocking: bool = True,
+    ) -> TopologyGraphResponse: ...
 
 
 class SqlAlchemyTopologyRepository:
@@ -842,5 +851,23 @@ class SqlAlchemyTopologyRepository:
             latest_sonos_captured_at=latest_sonos.captured_at if latest_sonos else None,
             floors=floor_dtos,
         )
+
+    async def build_unified_graph(
+        self,
+        layer_filter: str = "ALL",
+        floor_slug: str | None = None,
+        room_slug: str | None = None,
+        include_blocking: bool = True,
+    ) -> TopologyGraphResponse:
+        latest_sonos = await self.get_sonos_telemetry()
+        return await synthesize_unified_topology_graph(
+            session=self._session,
+            latest_sonos=latest_sonos,
+            layer_filter=layer_filter,
+            floor_slug=floor_slug,
+            room_slug=room_slug,
+            include_blocking=include_blocking,
+        )
+
 
 

@@ -567,6 +567,23 @@ SEED_DEVICES = [
         "notes": "L3 VLAN Router (VLAN 1 Admin, VLAN 10 WuTangLan-Family, VLAN 20 Guest, VLAN 30 IOT)",
         "is_archived": False,
     },
+    {
+        "slug": "router-fritzbox-6660",
+        "name": "Fritzbox 6660",
+        "device_role": DeviceRole.ROUTER.value,
+        "model_name": "FRITZ!Box 6660 Cable",
+        "ip_address": "192.168.178.1",
+        "base_mac": "0C:72:74:00:63:9A",
+        "sonosnet_bssid": None,
+        "rincon_uuid": None,
+        "connection_mode": None,
+        "health_grade": HealthGrade.EXCELLENT.value,
+        "ofdm_ani_level": None,
+        "room_slug": "keller",
+        "port_number": None,
+        "notes": "Upstream Cable Modem / WAN Gateway (Wi-Fi Disabled)",
+        "is_archived": False,
+    },
 ]
 
 

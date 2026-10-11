@@ -435,3 +435,83 @@ class WiFiRoomSurveySchema(BaseModel):
     readings: list[BssidReadingSchema] = []
 
 
+class TopologyNodeSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    device_id: str | None = None
+    slug: str
+    name: str
+    device_role: str
+    model_name: str
+    ip_address: str | None = None
+    base_mac: str | None = None
+    rincon_uuid: str | None = None
+    room_id: str | None = None
+    room_slug: str | None = None
+    room_name: str | None = None
+    floor_id: str | None = None
+    floor_slug: str | None = None
+    floor_name: str | None = None
+    connection_mode: str | None = None
+    health_grade: str = "GOOD"
+    ofdm_ani_level: int | None = None
+    noise_floor_dbm: int | None = None
+    phy_error_rate: float | None = None
+    stp_path_cost: int | None = None
+    designated_root: str | None = None
+    is_stp_root: bool = False
+    is_ghost_group: bool = False
+    rssi_dbm: int | None = None
+    ap_channels: str | None = None
+    switch_port_number: int | None = None
+    x: float = 0.0
+    y: float = 0.0
+    pos_x: float = 0.0
+    pos_y: float = 0.0
+
+
+class DeviceConnectionEdgeSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    layer: str
+    source: str
+    source_id: str
+    source_slug: str
+    source_name: str
+    target: str
+    target_id: str
+    target_slug: str
+    target_name: str
+    label: str
+    is_forwarding: bool = True
+    line_style: str = "solid"
+    stp_state: str | None = None
+    band: str | None = None
+    channel: int | None = None
+    from_db: int | None = None
+    to_db: int | None = None
+    rssi_dbm: int | None = None
+    link_speed_mbps: int | None = None
+    port_number: int | None = None
+    vlan_label: str | None = None
+    health_grade: str = "GOOD"
+
+
+class TopologyGraphResponse(BaseModel):
+    layer_filter: str = "ALL"
+    floor_slug: str | None = None
+    room_slug: str | None = None
+    include_blocking: bool = True
+    designated_stp_root: str
+    total_nodes: int
+    total_edges: int
+    nodes: list[TopologyNodeSchema]
+    edges: list[DeviceConnectionEdgeSchema]
+
+
+TopologyGraphDto = TopologyGraphResponse
+
+
+

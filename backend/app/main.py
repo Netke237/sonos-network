@@ -37,6 +37,7 @@ from app.schemas.topology import (
     SwitchPortCreate,
     SwitchPortRead,
     SwitchPortUpdate,
+    TopologyGraphResponse,
     WiFiInfraSnapshot,
     WiFiRoomSurveyCreate,
     WiFiRoomSurveySchema,
@@ -121,6 +122,23 @@ def create_app(
         repo: SqlAlchemyTopologyRepository = Depends(get_repo),
     ) -> HouseOverviewDto:
         return await repo.get_house_overview(include_archived=include_archived)
+
+    @app.get("/api/topology", response_model=TopologyGraphResponse)
+    async def get_topology_graph(
+        layer: str = Query("ALL"),
+        layer_filter: str | None = Query(None),
+        floor_slug: str | None = Query(None),
+        room_slug: str | None = Query(None),
+        include_blocking: bool = Query(True),
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+    ) -> TopologyGraphResponse:
+        effective_layer = layer_filter or layer
+        return await repo.build_unified_graph(
+            layer_filter=effective_layer,
+            floor_slug=floor_slug,
+            room_slug=room_slug,
+            include_blocking=include_blocking,
+        )
 
 
     # --- Floors CRUD ---
