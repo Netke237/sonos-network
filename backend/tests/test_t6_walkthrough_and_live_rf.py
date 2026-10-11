@@ -75,6 +75,9 @@ async def test_compute_survey_delta_default_picks_oldest_and_newest(test_app):
             assert delta["baseline_survey_slug"] is not None
             assert delta["target_survey_slug"] is not None
             assert "summary_narrative" in delta
+            assert delta["delta_phy_error_rate"] is not None
+            assert delta["delta_phy_error_rate"] < 0
+            assert delta["sonos_improved"] is True
 
 
 def test_websocket_live_rf_streaming_and_isolated_cursor(test_app):

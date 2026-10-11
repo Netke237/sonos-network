@@ -843,43 +843,45 @@ class SqlAlchemyTopologyRepository:
         room_devs = list(dev_res.scalars().all())
         num_devs = len(room_devs) or 1
 
-        first_snaps_res = await self._session.execute(
-            select(SonosTelemetrySnapshot)
-            .where(
-                SonosTelemetrySnapshot.room_id == room.id,
-                SonosTelemetrySnapshot.captured_at <= baseline.captured_at,
-            )
-            .order_by(SonosTelemetrySnapshot.captured_at.desc())
-            .limit(num_devs)
+        times_res = await self._session.execute(
+            select(SonosTelemetrySnapshot.captured_at)
+            .where(SonosTelemetrySnapshot.room_id == room.id)
+            .distinct()
         )
-        first_snaps = list(first_snaps_res.scalars().all())
-        if not first_snaps:
-            first_fallback_res = await self._session.execute(
-                select(SonosTelemetrySnapshot)
-                .where(SonosTelemetrySnapshot.room_id == room.id)
-                .order_by(SonosTelemetrySnapshot.captured_at.asc())
-                .limit(num_devs)
-            )
-            first_snaps = list(first_fallback_res.scalars().all())
+        all_snap_times = sorted(times_res.scalars().all())
 
-        last_snaps_res = await self._session.execute(
-            select(SonosTelemetrySnapshot)
-            .where(
-                SonosTelemetrySnapshot.room_id == room.id,
-                SonosTelemetrySnapshot.captured_at <= target.captured_at,
+        first_snaps: list[SonosTelemetrySnapshot] = []
+        last_snaps: list[SonosTelemetrySnapshot] = []
+
+        if all_snap_times:
+            closest_base_time = min(
+                all_snap_times,
+                key=lambda t: abs((t - baseline.captured_at).total_seconds()),
             )
-            .order_by(SonosTelemetrySnapshot.captured_at.desc())
-            .limit(num_devs)
-        )
-        last_snaps = list(last_snaps_res.scalars().all())
-        if not last_snaps:
-            last_fallback_res = await self._session.execute(
-                select(SonosTelemetrySnapshot)
-                .where(SonosTelemetrySnapshot.room_id == room.id)
-                .order_by(SonosTelemetrySnapshot.captured_at.desc())
-                .limit(num_devs)
+            closest_target_time = min(
+                all_snap_times,
+                key=lambda t: abs((t - target.captured_at).total_seconds()),
             )
-            last_snaps = list(last_fallback_res.scalars().all())
+            if closest_base_time == closest_target_time and len(all_snap_times) > 1:
+                if baseline.captured_at < target.captured_at:
+                    closest_base_time = all_snap_times[0]
+                    closest_target_time = all_snap_times[-1]
+
+            first_snaps_res = await self._session.execute(
+                select(SonosTelemetrySnapshot).where(
+                    SonosTelemetrySnapshot.room_id == room.id,
+                    SonosTelemetrySnapshot.captured_at == closest_base_time,
+                )
+            )
+            first_snaps = list(first_snaps_res.scalars().all())
+
+            last_snaps_res = await self._session.execute(
+                select(SonosTelemetrySnapshot).where(
+                    SonosTelemetrySnapshot.room_id == room.id,
+                    SonosTelemetrySnapshot.captured_at == closest_target_time,
+                )
+            )
+            last_snaps = list(last_snaps_res.scalars().all())
 
         base_ani = None
         target_ani = None
