@@ -1,7 +1,7 @@
 {
   "project": "sonos-network",
   "repo": "Netke237/sonos-network",
-  "active_phase": "PHASE-1-CORE-PLATFORM",
+  "active_phase": null,
   "audit_rule": {
     "max_rounds_per_stage": 3,
     "gate_criteria": [
@@ -15,7 +15,7 @@
     {
       "id": "PHASE-1-CORE-PLATFORM",
       "title": "Always-On Home Wi-Fi & Sonos Network Intelligence Platform (Backend + PC/Web Frontend on Mini PC)",
-      "status": "in_progress",
+      "status": "completed",
       "plan_audit_rounds": 2,
       "plan_audit_clean": true,
       "code_audit_rounds": 3,
