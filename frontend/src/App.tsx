@@ -67,6 +67,8 @@ export default function App() {
   const [roomDiagnostics, setRoomDiagnostics] = useState<RoomDiagnosticSummary | null>(null);
   const [loadingDiagnostics, setLoadingDiagnostics] = useState<boolean>(false);
   const [actionBanner, setActionBanner] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [busyMessage, setBusyMessage] = useState<string | null>(null);
 
   // T6 Survey Delta State
   const [deltaOpen, setDeltaOpen] = useState<boolean>(false);
@@ -152,6 +154,8 @@ export default function App() {
   ) => {
     setSelectedHistoryRoom(room);
     setHistoryRange(range);
+    setBusyAction(`history-${room.id}`);
+    setBusyMessage(`Loading historical telemetry trends for ${room.name}...`);
     try {
       setLoadingHistory(true);
       const hist = await fetchRoomHistory(room.slug, range);
@@ -160,12 +164,18 @@ export default function App() {
       setError(err instanceof Error ? err.message : "Failed to load room history");
     } finally {
       setLoadingHistory(false);
+      setBusyAction(null);
+      setBusyMessage(null);
     }
   };
 
   const handleChangeHistoryRange = async (range: "1h" | "24h" | "7d") => {
     setHistoryRange(range);
     if (selectedHistoryRoom) {
+      setBusyAction(`history-range-${range}`);
+      setBusyMessage(
+        `Loading historical telemetry for ${selectedHistoryRoom.name} (${range})...`
+      );
       try {
         setLoadingHistory(true);
         const hist = await fetchRoomHistory(selectedHistoryRoom.slug, range);
@@ -174,11 +184,15 @@ export default function App() {
         setError(err instanceof Error ? err.message : "Failed to load room history");
       } finally {
         setLoadingHistory(false);
+        setBusyAction(null);
+        setBusyMessage(null);
       }
     }
   };
 
   const handleTriggerDaemonCollect = async () => {
+    setBusyAction("daemon-cycle");
+    setBusyMessage("Executing 24/7 background telemetry cycle across all players...");
     try {
       const res = await triggerDaemonCollect();
       setActionBanner(
@@ -192,6 +206,9 @@ export default function App() {
       setError(
         err instanceof Error ? err.message : "Failed to trigger daemon collection"
       );
+    } finally {
+      setBusyAction(null);
+      setBusyMessage(null);
     }
   };
 
@@ -232,6 +249,8 @@ export default function App() {
     targetSlug?: string
   ) => {
     if (!selectedRoom) return;
+    setBusyAction("compare-delta");
+    setBusyMessage(`Comparing survey deltas for ${selectedRoom.name}...`);
     try {
       const d = await fetchSurveyDelta(
         selectedRoom.slug,
@@ -244,44 +263,63 @@ export default function App() {
       setError(
         err instanceof Error ? err.message : "Failed to load survey delta"
       );
+    } finally {
+      setBusyAction(null);
+      setBusyMessage(null);
     }
   };
 
   const handleOpenRoomSurveys = async (room: RoomMatrixItem) => {
     setSelectedRoom(room);
+    setBusyAction(`inspect-${room.id}`);
+    setBusyMessage(`Loading Wi-Fi RF spectrum & survey scans for ${room.name}...`);
     try {
       const surveys = await fetchRoomSurveys(room.slug);
       setRoomSurveys(Array.isArray(surveys) ? surveys : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load room Wi-Fi surveys");
+    } finally {
+      setBusyAction(null);
+      setBusyMessage(null);
     }
   };
 
   const handleCreateRoomSurvey = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRoom) return;
-    const labelToUse = surveyLabel.trim() || "Manual Room Survey";
-    await createRoomSurvey(selectedRoom.slug, {
-      label: labelToUse,
-      link_speed_mbps: Number(surveyLinkSpeed) || undefined,
-      readings: [
-        {
-          bssid: surveyBssid,
-          ssid: surveySsid,
-          band: surveyBand,
-          channel: Number(surveyChannel),
-          width_mhz: Number(surveyWidth),
-          rssi_dbm: Number(surveyRssi),
-        },
-      ],
-    });
-    setSurveyLabel("");
-    const updatedSurveys = await fetchRoomSurveys(selectedRoom.slug);
-    setRoomSurveys(Array.isArray(updatedSurveys) ? updatedSurveys : []);
-    await loadData(includeArchived);
+    setBusyAction("submit-survey");
+    setBusyMessage(`Saving Wi-Fi survey for ${selectedRoom.name}...`);
+    try {
+      const labelToUse = surveyLabel.trim() || "Manual Room Survey";
+      await createRoomSurvey(selectedRoom.slug, {
+        label: labelToUse,
+        link_speed_mbps: Number(surveyLinkSpeed) || undefined,
+        readings: [
+          {
+            bssid: surveyBssid,
+            ssid: surveySsid,
+            band: surveyBand,
+            channel: Number(surveyChannel),
+            width_mhz: Number(surveyWidth),
+            rssi_dbm: Number(surveyRssi),
+          },
+        ],
+      });
+      setSurveyLabel("");
+      const updatedSurveys = await fetchRoomSurveys(selectedRoom.slug);
+      setRoomSurveys(Array.isArray(updatedSurveys) ? updatedSurveys : []);
+      await loadData(includeArchived);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create survey");
+    } finally {
+      setBusyAction(null);
+      setBusyMessage(null);
+    }
   };
 
   const handlePollSonosNow = async () => {
+    setBusyAction("poll-sonos");
+    setBusyMessage("Polling live Sonos telemetry from 14 players via UPnP & Atheros drivers...");
     try {
       const snap = await pollLiveSonosNow();
       setActionBanner(
@@ -290,10 +328,15 @@ export default function App() {
       await loadData(includeArchived);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to poll Sonos");
+    } finally {
+      setBusyAction(null);
+      setBusyMessage(null);
     }
   };
 
   const handleFlushGhostGroups = async () => {
+    setBusyAction("flush-ghost");
+    setBusyMessage("Flushing Ghost Groups across all zones...");
     try {
       const res = await flushGhostGroups();
       setActionBanner(
@@ -304,12 +347,17 @@ export default function App() {
       await loadData(includeArchived);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to flush ghost groups");
+    } finally {
+      setBusyAction(null);
+      setBusyMessage(null);
     }
   };
 
   const handleOpenRoomDiagnostics = async (room: RoomMatrixItem) => {
     setSelectedDiagnosticRoom(room);
     setLoadingDiagnostics(true);
+    setBusyAction(`diag-${room.id}`);
+    setBusyMessage(`Running 3-Pillar analysis (Sonos, Wi-Fi, Switch VLAN) for ${room.name}...`);
     try {
       const diag = await fetchRoomDiagnostics(room.slug);
       setRoomDiagnostics(diag);
@@ -321,10 +369,14 @@ export default function App() {
       );
     } finally {
       setLoadingDiagnostics(false);
+      setBusyAction(null);
+      setBusyMessage(null);
     }
   };
 
   const handleExecuteProposal = async (proposal: SolutionProposal) => {
+    setBusyAction(`prop-${proposal.rank}`);
+    setBusyMessage(`Executing solution proposal: ${proposal.title}...`);
     try {
       if (proposal.one_click_action === "FLUSH_GHOST_GROUPS") {
         const res = await flushGhostGroups();
@@ -365,6 +417,9 @@ export default function App() {
       setError(
         err instanceof Error ? err.message : "Failed to execute proposal action"
       );
+    } finally {
+      setBusyAction(null);
+      setBusyMessage(null);
     }
   };
 
@@ -439,6 +494,70 @@ export default function App() {
         padding: "24px",
       }}
     >
+      {/* CSS Animation Keyframes for Sand Clock and Pulse */}
+      <style>{`
+        @keyframes sonosSpin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes sonosPulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.85; transform: scale(0.98); }
+        }
+      `}</style>
+
+      {/* Floating Global Sand Clock Activity Banner */}
+      {busyMessage && (
+        <aside
+          aria-label="Action Progress Notification"
+          role="status"
+          style={{
+            position: "fixed",
+            top: "20px",
+            right: "24px",
+            zIndex: 99999,
+            backgroundColor: "#091426",
+            border: "2px solid #38bdf8",
+            boxShadow:
+              "0 20px 25px -5px rgba(0, 0, 0, 0.7), 0 0 20px rgba(56, 189, 248, 0.5)",
+            borderRadius: "10px",
+            padding: "12px 20px",
+            color: "#f8fafc",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            fontWeight: 600,
+            fontSize: "0.92rem",
+            maxWidth: "480px",
+            animation: "sonosPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "1.3rem",
+              display: "inline-block",
+              animation: "sonosSpin 1.8s linear infinite",
+            }}
+          >
+            ⏳
+          </span>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span
+              style={{
+                fontSize: "0.75rem",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                color: "#38bdf8",
+                fontWeight: 700,
+              }}
+            >
+              Action in Progress
+            </span>
+            <span>{busyMessage}</span>
+          </div>
+        </aside>
+      )}
+
       {/* Top Header */}
       <header
         style={{
@@ -484,6 +603,7 @@ export default function App() {
           </label>
           <button
             type="button"
+            disabled={Boolean(busyAction)}
             onClick={() => void handlePollSonosNow()}
             style={{
               backgroundColor: "#0d9488",
@@ -492,13 +612,28 @@ export default function App() {
               borderRadius: "6px",
               padding: "8px 14px",
               fontWeight: 600,
-              cursor: "pointer",
+              cursor: busyAction ? "not-allowed" : "pointer",
+              opacity: busyAction ? 0.65 : 1,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
             }}
           >
-            Poll Live Sonos Now
+            {busyAction === "poll-sonos" && (
+              <span
+                style={{
+                  display: "inline-block",
+                  animation: "sonosSpin 1.5s linear infinite",
+                }}
+              >
+                ⏳
+              </span>
+            )}
+            Poll Live Sonos Now{busyAction === "poll-sonos" ? " (Polling...)" : ""}
           </button>
           <button
             type="button"
+            disabled={Boolean(busyAction)}
             onClick={() => void handleFlushGhostGroups()}
             style={{
               backgroundColor: "#dc2626",
@@ -507,13 +642,28 @@ export default function App() {
               borderRadius: "6px",
               padding: "8px 14px",
               fontWeight: 600,
-              cursor: "pointer",
+              cursor: busyAction ? "not-allowed" : "pointer",
+              opacity: busyAction ? 0.65 : 1,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
             }}
           >
-            Flush Ghost Groups
+            {busyAction === "flush-ghost" && (
+              <span
+                style={{
+                  display: "inline-block",
+                  animation: "sonosSpin 1.5s linear infinite",
+                }}
+              >
+                ⏳
+              </span>
+            )}
+            Flush Ghost Groups{busyAction === "flush-ghost" ? " (Flushing...)" : ""}
           </button>
           <button
             type="button"
+            disabled={Boolean(busyAction)}
             onClick={() => void handleTriggerDaemonCollect()}
             style={{
               backgroundColor: "#0284c7",
@@ -522,10 +672,24 @@ export default function App() {
               borderRadius: "6px",
               padding: "8px 14px",
               fontWeight: 600,
-              cursor: "pointer",
+              cursor: busyAction ? "not-allowed" : "pointer",
+              opacity: busyAction ? 0.65 : 1,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
             }}
           >
-            Run 24/7 Daemon Cycle
+            {busyAction === "daemon-cycle" && (
+              <span
+                style={{
+                  display: "inline-block",
+                  animation: "sonosSpin 1.5s linear infinite",
+                }}
+              >
+                ⏳
+              </span>
+            )}
+            Run 24/7 Daemon Cycle{busyAction === "daemon-cycle" ? " (Running...)" : ""}
           </button>
           <span
             role="status"
@@ -1391,6 +1555,7 @@ export default function App() {
                       </div>
                       <button
                         type="button"
+                        disabled={Boolean(busyAction)}
                         onClick={(e) => {
                           e.stopPropagation();
                           void handleOpenRoomSurveys(room);
@@ -1403,10 +1568,24 @@ export default function App() {
                           padding: "3px 8px",
                           fontSize: "0.7rem",
                           fontWeight: 600,
-                          cursor: "pointer",
+                          cursor: busyAction ? "not-allowed" : "pointer",
+                          opacity: busyAction ? 0.65 : 1,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
                         }}
                       >
-                        Inspect Room Wi-Fi
+                        {busyAction === `inspect-${room.id}` && (
+                          <span
+                            style={{
+                              display: "inline-block",
+                              animation: "sonosSpin 1.5s linear infinite",
+                            }}
+                          >
+                            ⏳
+                          </span>
+                        )}
+                        Inspect Room Wi-Fi{busyAction === `inspect-${room.id}` ? " (Inspecting...)" : ""}
                       </button>
                     </div>
 
@@ -1557,6 +1736,7 @@ export default function App() {
                     >
                       <button
                         type="button"
+                        disabled={Boolean(busyAction)}
                         onClick={(e) => {
                           e.stopPropagation();
                           void handleOpenRoomDiagnostics(room);
@@ -1569,13 +1749,28 @@ export default function App() {
                           padding: "4px 8px",
                           fontSize: "0.72rem",
                           fontWeight: 600,
-                          cursor: "pointer",
+                          cursor: busyAction ? "not-allowed" : "pointer",
+                          opacity: busyAction ? 0.65 : 1,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
                         }}
                       >
-                        Diagnose Room / 3-Pillar Analysis
+                        {busyAction === `diag-${room.id}` && (
+                          <span
+                            style={{
+                              display: "inline-block",
+                              animation: "sonosSpin 1.5s linear infinite",
+                            }}
+                          >
+                            ⏳
+                          </span>
+                        )}
+                        Diagnose Room / 3-Pillar Analysis{busyAction === `diag-${room.id}` ? " (Analyzing...)" : ""}
                       </button>
                       <button
                         type="button"
+                        disabled={Boolean(busyAction)}
                         onClick={(e) => {
                           e.stopPropagation();
                           void handleOpenRoomHistory(room);
@@ -1588,10 +1783,24 @@ export default function App() {
                           padding: "4px 8px",
                           fontSize: "0.72rem",
                           fontWeight: 600,
-                          cursor: "pointer",
+                          cursor: busyAction ? "not-allowed" : "pointer",
+                          opacity: busyAction ? 0.65 : 1,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
                         }}
                       >
-                        Historical Trends
+                        {busyAction === `history-${room.id}` && (
+                          <span
+                            style={{
+                              display: "inline-block",
+                              animation: "sonosSpin 1.5s linear infinite",
+                            }}
+                          >
+                            ⏳
+                          </span>
+                        )}
+                        Historical Trends{busyAction === `history-${room.id}` ? " (Loading...)" : ""}
                       </button>
                       <button
                         type="button"
@@ -2055,6 +2264,7 @@ export default function App() {
                           {prop.action_type === "ONE_CLICK" && (
                             <button
                               type="button"
+                              disabled={Boolean(busyAction)}
                               onClick={() => void handleExecuteProposal(prop)}
                               style={{
                                 backgroundColor: "#059669",
@@ -2064,10 +2274,24 @@ export default function App() {
                                 padding: "4px 10px",
                                 fontSize: "0.75rem",
                                 fontWeight: 600,
-                                cursor: "pointer",
+                                cursor: busyAction ? "not-allowed" : "pointer",
+                                opacity: busyAction ? 0.65 : 1,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
                               }}
                             >
-                              Execute: {prop.title}
+                              {busyAction === `prop-${prop.rank}` && (
+                                <span
+                                  style={{
+                                    display: "inline-block",
+                                    animation: "sonosSpin 1.5s linear infinite",
+                                  }}
+                                >
+                                  ⏳
+                                </span>
+                              )}
+                              Execute: {prop.title}{busyAction === `prop-${prop.rank}` ? " (Executing...)" : ""}
                             </button>
                           )}
                         </div>
@@ -2148,6 +2372,7 @@ export default function App() {
                   <button
                     key={r}
                     type="button"
+                    disabled={Boolean(busyAction)}
                     onClick={() => void handleChangeHistoryRange(r)}
                     style={{
                       backgroundColor: historyRange === r ? "#0284c7" : "#0f172a",
@@ -2157,9 +2382,23 @@ export default function App() {
                       padding: "4px 10px",
                       fontSize: "0.78rem",
                       fontWeight: 700,
-                      cursor: "pointer",
+                      cursor: busyAction ? "not-allowed" : "pointer",
+                      opacity: busyAction && busyAction !== `history-range-${r}` ? 0.65 : 1,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
                     }}
                   >
+                    {busyAction === `history-range-${r}` && (
+                      <span
+                        style={{
+                          display: "inline-block",
+                          animation: "sonosSpin 1.5s linear infinite",
+                        }}
+                      >
+                        ⏳
+                      </span>
+                    )}
                     {r}
                   </button>
                 ))}
@@ -2453,6 +2692,7 @@ export default function App() {
           <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap" }}>
             <button
               type="button"
+              disabled={Boolean(busyAction)}
               onClick={() => void handleLoadSurveyDelta(baselineSurveySlug, targetSurveySlug)}
               style={{
                 backgroundColor: "#0284c7",
@@ -2462,10 +2702,24 @@ export default function App() {
                 padding: "6px 14px",
                 fontSize: "0.8rem",
                 fontWeight: 600,
-                cursor: "pointer",
+                cursor: busyAction ? "not-allowed" : "pointer",
+                opacity: busyAction ? 0.65 : 1,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
               }}
             >
-              Compare Surveys / View Delta
+              {busyAction === "compare-delta" && (
+                <span
+                  style={{
+                    display: "inline-block",
+                    animation: "sonosSpin 1.5s linear infinite",
+                  }}
+                >
+                  ⏳
+                </span>
+              )}
+              Compare Surveys / View Delta{busyAction === "compare-delta" ? " (Comparing...)" : ""}
             </button>
           </div>
 
