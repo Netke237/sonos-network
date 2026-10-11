@@ -28,7 +28,7 @@ fi
 
 # 3. Build and spin up the Docker Compose stack
 echo ""
-echo "[STEP 1] Starting Docker Compose stack (db:5434, backend:8000, frontend:3000)..."
+echo "[STEP 1] Starting Docker Compose stack (db:5434, backend:8001, frontend:3000)..."
 docker compose up -d --build
 
 # 4. Wait for database service health
@@ -47,10 +47,10 @@ done
 
 # 5. Wait for backend health endpoint
 echo ""
-echo "[STEP 3] Verifying Backend Health (http://localhost:8000/api/health)..."
+echo "[STEP 3] Verifying Backend Health (http://localhost:8001/api/health)..."
 BACKEND_OK=false
 for i in $(seq 1 25); do
-    if curl -sf --max-time 3 http://localhost:8000/api/health >/dev/null; then
+    if curl -sf --max-time 3 http://localhost:8001/api/health >/dev/null; then
         BACKEND_OK=true
         echo "[OK] Backend responded with status=ok."
         break
@@ -59,14 +59,14 @@ for i in $(seq 1 25); do
 done
 
 if [ "$BACKEND_OK" = false ]; then
-    echo "[ERROR] Backend failed to respond on http://localhost:8000/api/health."
+    echo "[ERROR] Backend failed to respond on http://localhost:8001/api/health."
     exit 1
 fi
 
 # 6. Verify 24/7 background telemetry daemon
 echo ""
-echo "[STEP 4] Verifying 24/7 Telemetry Daemon (http://localhost:8000/api/daemon/status)..."
-curl -s --max-time 3 http://localhost:8000/api/daemon/status || true
+echo "[STEP 4] Verifying 24/7 Telemetry Daemon (http://localhost:8001/api/daemon/status)..."
+curl -s --max-time 3 http://localhost:8001/api/daemon/status || true
 
 # 7. Verify frontend accessibility
 echo ""
@@ -77,6 +77,6 @@ echo ""
 echo "=========================================================="
 echo "Deployment Verified Successfully!"
 echo "Database: 192.168.55.60:5434 (PostgreSQL 15)"
-echo "Backend:  http://192.168.55.60:8000 / http://localhost:8000"
+echo "Backend:  http://192.168.55.60:8001 / http://localhost:8001"
 echo "Frontend: http://192.168.55.60:3000 / http://localhost:3000"
 echo "=========================================================="

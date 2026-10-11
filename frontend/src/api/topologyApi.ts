@@ -22,7 +22,7 @@ import type {
 
 const API_BASE =
   (import.meta as unknown as { env?: Record<string, string> }).env
-    ?.VITE_API_BASE_URL ?? "http://192.168.55.60:8000";
+    ?.VITE_API_BASE_URL ?? "http://192.168.55.60:8001";
 
 export async function fetchHouseOverview(
   includeArchived = false
