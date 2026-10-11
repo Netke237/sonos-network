@@ -5,6 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import (
+    AccessPointRadio,
+    BssidReading,
     ConnectionMode,
     DeviceRole,
     Floor,
@@ -15,8 +17,12 @@ from app.models.entities import (
     SonosTelemetrySnapshot,
     StpPortState,
     SwitchPort,
+    WiFiRoomSurvey,
 )
 from app.modules.sonos_telemetry import MASTER_SONOS_INVENTORY
+from app.modules.wifi_omada import MASTER_AP_RADIOS, build_wifi_room_survey
+from app.schemas.topology import BssidReadingInput
+
 
 
 
@@ -939,5 +945,535 @@ async def seed_initial_data(session: AsyncSession) -> None:
             )
             existing_link_keys.add(l_key)
 
+    # 6. Seed AccessPointRadio records (Galerie EAP650 & Kitchen EAP650)
+    existing_radios_res = await session.execute(select(AccessPointRadio.radio_key))
+    existing_radio_keys = {k for k in existing_radios_res.scalars().all() if k is not None}
+
+    ap_dev_map = {
+        "galerie-ap": devs_by_slug.get("ap-galerie-eap650"),
+        "kitchen-ap": devs_by_slug.get("ap-kitchen-eap650"),
+    }
+    for r_meta in MASTER_AP_RADIOS:
+        r_key = str(r_meta["radio_key"])
+        if r_key not in existing_radio_keys:
+            ap_dev = ap_dev_map.get(str(r_meta["ap_device_slug"]))
+            session.add(
+                AccessPointRadio(
+                    radio_key=r_key,
+                    ap_device_id=ap_dev.id if ap_dev else None,
+                    ap_device_slug=str(r_meta["ap_device_slug"]),
+                    ap_name=str(r_meta["ap_name"]),
+                    room_slug=str(r_meta["room_slug"]),
+                    band=str(r_meta["band"]),
+                    base_mac=str(r_meta["base_mac"]),
+                    bssid_suffix=str(r_meta["bssid_suffix"]),
+                    derived_bssids_csv=",".join(r_meta["derived_bssids"]),
+                    channel=int(r_meta["channel"]),
+                    center_channel=int(r_meta["center_channel"]),
+                    width_mhz=int(r_meta["width_mhz"]),
+                    tx_power_dbm=int(r_meta["tx_power_dbm"]),
+                    airtime_utilization_pct=float(r_meta["airtime_utilization_pct"]),
+                    is_non_dfs=bool(r_meta["is_non_dfs"]),
+                    status=str(r_meta["status"]),
+                )
+            )
+            existing_radio_keys.add(r_key)
+
+    # 7. Seed 19-21 Sep 2026 Historical Baseline & 4-8 Oct 2026 Post-Remediation Room Surveys across all 11 rooms
+    existing_surveys_res = await session.execute(select(WiFiRoomSurvey.survey_slug))
+    existing_survey_slugs = {
+        s for s in existing_surveys_res.scalars().all() if s is not None
+    }
+
+    for s_def in SEED_ROOM_SURVEYS:
+        s_slug = str(s_def["survey_slug"])
+        if s_slug in existing_survey_slugs:
+            continue
+        room = rooms_by_slug.get(str(s_def["room_slug"]))
+        if not room:
+            continue
+
+        inputs = [
+            BssidReadingInput(
+                bssid=b[0],
+                ssid=b[1],
+                band=b[2],
+                channel=b[3],
+                center_channel=b[4],
+                width_mhz=b[5],
+                rssi_dbm=b[6],
+            )
+            for b in s_def["readings"]
+        ]
+        built = build_wifi_room_survey(
+            room_slug=room.slug,
+            room_name=room.name,
+            survey_slug=s_slug,
+            label=str(s_def["label"]),
+            trigger_mode=str(s_def.get("trigger_mode", "HISTORICAL_SEED")),
+            captured_at=s_def["captured_at"],
+            connected_bssid=s_def.get("connected_bssid"),
+            connected_ssid=s_def.get("connected_ssid"),
+            link_speed_mbps=s_def.get("link_speed_mbps"),
+            notes=s_def.get("notes"),
+            readings=inputs,
+            room_id=room.id,
+        )
+        survey_row = WiFiRoomSurvey(
+            survey_slug=built.survey_slug,
+            room_id=room.id,
+            room_slug=room.slug,
+            room_name=room.name,
+            label=built.label,
+            trigger_mode=built.trigger_mode,
+            captured_at=built.captured_at,
+            connected_bssid=built.connected_bssid,
+            connected_ssid=built.connected_ssid,
+            link_speed_mbps=built.link_speed_mbps,
+            frequency_mhz=built.frequency_mhz,
+            best_5ghz_dbm=built.best_5ghz_dbm,
+            best_24ghz_dbm=built.best_24ghz_dbm,
+            best_ap_slug=built.best_ap_slug,
+            best_ap_name=built.best_ap_name,
+            rogue_count=built.rogue_count,
+            neighbor_count=built.neighbor_count,
+            grade_5ghz=built.grade_5ghz,
+            grade_24ghz=built.grade_24ghz,
+            wifi_health_grade=built.wifi_health_grade,
+            notes=built.notes,
+        )
+        session.add(survey_row)
+        await session.flush()
+
+        for idx, r_item in enumerate(built.readings, start=1):
+            session.add(
+                BssidReading(
+                    reading_key=f"{s_slug}:{idx}:{r_item.bssid}",
+                    survey_id=survey_row.id,
+                    room_id=room.id,
+                    bssid=r_item.bssid,
+                    ssid=r_item.ssid,
+                    band=r_item.band,
+                    channel=r_item.channel,
+                    center_channel=r_item.center_channel,
+                    width_mhz=r_item.width_mhz,
+                    rssi_dbm=r_item.rssi_dbm,
+                    classification=r_item.classification,
+                    ap_device_slug=r_item.ap_device_slug,
+                    ap_name=r_item.ap_name,
+                    is_connected=r_item.is_connected,
+                )
+            )
+        existing_survey_slugs.add(s_slug)
+
     await session.commit()
+
+
+# Format of each reading tuple: (bssid, ssid, band, channel, center_channel, width_mhz, rssi_dbm)
+SEED_ROOM_SURVEYS: list[dict[str, Any]] = [
+    # 1. Elternbad
+    {
+        "survey_slug": "elternbad-19-sep-2026-baseline",
+        "room_slug": "elternbad",
+        "label": "19 Sep 2026 Historical Baseline (Epson -42 dBm Rogue)",
+        "captured_at": datetime(2026, 9, 19, 21, 14, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Netlog_Elternbad.jpg — Epson ET-4850 Wi-Fi Direct blasting at -42 dBm on Ch 11.",
+        "readings": [
+            ("6A:55:D4:7D:0B:9B", "DIRECT-f1-EPSON-ET-4850", "2.4GHz", 11, 11, 20, -42),
+            ("72:4C:BC:76:7C:41", "Admin", "5GHz", 44, 42, 80, -50),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -51),
+            ("7A:4C:BC:76:7C:40", "WuTangLan-Guest", "2.4GHz", 11, 11, 20, -56),
+            ("DC:A6:33:43:EC:0C", "Vodafone-DD14", "2.4GHz", 11, 11, 20, -60),
+            ("84:16:F9:93:E9:2D", "TP-Link_5G_93E92D", "5GHz", 36, 42, 80, -69),
+            ("86:16:F9:BF:E9:2D", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -72),
+            ("76:4C:BC:76:94:C0", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -76),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 48, 42, 80, -84),
+        ],
+    },
+    {
+        "survey_slug": "elternbad-04-oct-2026-sanitized",
+        "room_slug": "elternbad",
+        "label": "4 Oct 2026 Post-Remediation (Epson & EAP330 Eliminated)",
+        "captured_at": datetime(2026, 10, 4, 22, 19, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "4 Oct 2026 22:19 NetX scan — 1201 Mbps Wi-Fi 6 on Galerie Ch 44 (-55 dBm); Epson -42 dBm 100% eliminated.",
+        "readings": [
+            ("72:4C:BC:76:7C:41", "Admin", "5GHz", 44, 42, 80, -55),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -55),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -60),
+            ("72:4C:BC:76:7C:40", "Admin", "2.4GHz", 1, 1, 20, -61),
+            ("38:10:D5:8B:10:56", "WLAN-A7C604", "2.4GHz", 11, 11, 20, -84),
+            ("76:4C:BC:76:94:C0", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -85),
+            ("DC:A6:33:43:EC:0C", "Vodafone-DD14", "2.4GHz", 11, 11, 20, -87),
+            ("DE:A6:33:43:EC:0E", "Vodafone Hotspot", "2.4GHz", 11, 11, 20, -88),
+            ("7E:4C:BC:76:94:C1", "WuTangLan-IOT", "5GHz", 40, 38, 40, -91),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 40, 38, 40, -92),
+        ],
+    },
+    # 2. Elternschlafzimmer
+    {
+        "survey_slug": "elternschlafzimmer-19-sep-2026-baseline",
+        "room_slug": "elternschlafzimmer",
+        "label": "19 Sep 2026 Historical Baseline",
+        "captured_at": datetime(2026, 9, 19, 19, 42, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Netlog_elternschlafzimmer.jpg — 2.4GHz drifted from -57 to -79 dBm; EAP330 on Ch 6.",
+        "readings": [
+            ("72:4C:BC:76:7C:41", "Admin", "5GHz", 44, 42, 80, -54),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -54),
+            ("7A:4C:BC:76:7C:40", "WuTangLan-Guest", "2.4GHz", 11, 11, 20, -57),
+            ("84:16:F9:93:E9:2C", "[Hidden SSID]", "2.4GHz", 6, 6, 20, -78),
+            ("86:16:F9:BF:E9:2F", "WuTangLan-IOT", "2.4GHz", 6, 6, 20, -80),
+            ("38:10:D5:BA:88:B3", "FRITZ!Box 7490", "2.4GHz", 6, 6, 20, -80),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 48, 42, 80, -87),
+        ],
+    },
+    {
+        "survey_slug": "elternschlafzimmer-04-oct-2026-sanitized",
+        "room_slug": "elternschlafzimmer",
+        "label": "4 Oct 2026 Post-Remediation",
+        "captured_at": datetime(2026, 10, 4, 19, 6, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Galerie Ch 44 at -52 dBm & Ch 1 at -55 dBm; rogue EAP330 eliminated.",
+        "readings": [
+            ("34:7E:5C:38:28:B1", "SonosNet", "2.4GHz", 6, 6, 20, -48),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -52),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -55),
+        ],
+    },
+    # 3. Noemi
+    {
+        "survey_slug": "noemi-19-sep-2026-baseline",
+        "room_slug": "noemi",
+        "label": "19 Sep 2026 Historical Baseline",
+        "captured_at": datetime(2026, 9, 19, 21, 8, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Netlog_Noemi.jpg — AP-1 on Ch 11 (-56 dBm) & Ch 44 (-59 dBm).",
+        "readings": [
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -56),
+            ("72:4C:BC:76:7C:41", "Admin", "5GHz", 44, 42, 80, -59),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -61),
+            ("84:16:F9:93:E9:2D", "TP-Link_5G_93E92D", "5GHz", 44, 42, 80, -78),
+        ],
+    },
+    {
+        "survey_slug": "noemi-04-oct-2026-sanitized",
+        "room_slug": "noemi",
+        "label": "4 Oct 2026 Post-Remediation (Kitchen AP Ch 40/11)",
+        "captured_at": datetime(2026, 10, 4, 20, 41, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:94:C1",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 573,
+        "notes": "4 Oct 2026 20:41 NetX scan — Kitchen AP Ch 40 (-72 dBm) & Ch 11 (-70 dBm); neighbor WLAN-A7C604 at -71 dBm on Ch 11.",
+        "readings": [
+            ("76:4C:BC:76:94:C0", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -70),
+            ("1C:23:A2:7A:E3:7A", "WLAN-A7C604", "2.4GHz", 11, 11, 20, -71),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 40, 38, 40, -72),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -80),
+            ("1C:23:A2:7A:E3:7B", "WLAN-A7C604", "5GHz", 52, 50, 80, -81),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -84),
+        ],
+    },
+    # 4. Noah
+    {
+        "survey_slug": "noah-19-sep-2026-baseline",
+        "room_slug": "noah",
+        "label": "19 Sep 2026 Historical Baseline (2.4 GHz Hole)",
+        "captured_at": datetime(2026, 9, 19, 21, 4, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Netlog_Noah.jpg — No 2.4 GHz AP present in live scan; 5 GHz at -61 dBm.",
+        "readings": [
+            ("72:4C:BC:76:7C:41", "Admin", "5GHz", 44, 42, 80, -61),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -61),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 48, 42, 80, -67),
+            ("86:16:F9:BF:E9:2E", "WuTangLan-Guest", "2.4GHz", 6, 6, 20, -85),
+        ],
+    },
+    {
+        "survey_slug": "noah-04-oct-2026-sanitized",
+        "room_slug": "noah",
+        "label": "4 Oct 2026 Post-Remediation",
+        "captured_at": datetime(2026, 10, 4, 19, 6, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Galerie AP relocated -> 5 GHz Ch 44 at -57 dBm & 2.4 GHz Ch 1 at -60 dBm restored.",
+        "readings": [
+            ("34:7E:5C:35:B2:C1", "SonosNet", "2.4GHz", 6, 6, 20, -50),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -57),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -60),
+        ],
+    },
+    # 5. Nicolas
+    {
+        "survey_slug": "nicolas-19-sep-2026-baseline",
+        "room_slug": "nicolas",
+        "label": "20 Sep 2026 Historical Baseline (Fritzbox 2401 Mbps & EAP330 -55 dBm)",
+        "captured_at": datetime(2026, 9, 20, 20, 54, 0, tzinfo=timezone.utc),
+        "connected_bssid": "0C:72:74:00:63:9B",
+        "connected_ssid": "WuTangLan",
+        "link_speed_mbps": 2401,
+        "notes": "Netlog_Nicolas.jpg — Phone hijacked by rogue Fritzbox 6660 (WuTangLan) and EAP330 (TP-Link_5G_93E92D -55 dBm).",
+        "readings": [
+            ("84:16:F9:93:E9:2D", "TP-Link_5G_93E92D", "5GHz", 44, 42, 80, -55),
+            ("0C:72:74:00:63:9B", "WuTangLan", "5GHz", 36, 50, 160, -58),
+            ("1C:23:A2:7A:E3:7A", "WLAN-A7C604", "2.4GHz", 6, 6, 20, -61),
+            ("86:16:F9:BF:E9:2D", "WuTangLan-Family", "2.4GHz", 6, 6, 20, -64),
+            ("86:16:F9:BF:E9:2F", "WuTangLan-IOT", "2.4GHz", 6, 6, 20, -66),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -67),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -70),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 48, 42, 80, -77),
+        ],
+    },
+    {
+        "survey_slug": "nicolas-08-oct-2026-sanitized",
+        "room_slug": "nicolas",
+        "label": "8 Oct 2026 Post-Remediation Verification (Zero Rogue / 1201 Mbps)",
+        "captured_at": datetime(2026, 10, 8, 22, 43, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "8 Oct 2026 22:43 NetX scan — Rogue EAP330 & Fritzbox 100% eliminated; Galerie Ch 44 @ -72 dBm (1201 Mbps).",
+        "readings": [
+            ("7A:4C:BC:76:7C:41", "WuTangLan-Guest", "5GHz", 44, 42, 80, -72),
+            ("72:4C:BC:76:7C:41", "Admin", "5GHz", 44, 42, 80, -73),
+            ("7E:4C:BC:76:7C:41", "WuTangLan-IOT", "5GHz", 44, 42, 80, -73),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -75),
+            ("72:4C:BC:76:94:C1", "Admin", "5GHz", 40, 38, 40, -82),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 40, 38, 40, -82),
+            ("7A:4C:BC:76:94:C1", "WuTangLan-Guest", "5GHz", 40, 38, 40, -83),
+            ("7E:4C:BC:76:94:C1", "WuTangLan-IOT", "5GHz", 40, 38, 40, -83),
+        ],
+    },
+    # 6. Galerie
+    {
+        "survey_slug": "galerie-19-sep-2026-baseline",
+        "room_slug": "galerie",
+        "label": "19 Sep 2026 Historical Baseline",
+        "captured_at": datetime(2026, 9, 19, 21, 11, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Netlog_Galerie.jpg — AP-1 at -53 dBm on both bands; Epson at -68 dBm.",
+        "readings": [
+            ("0C:EF:15:5E:97:49", "Tapo_Bulb_9749", "2.4GHz", 6, 6, 20, -52),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -53),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -53),
+            ("72:4C:BC:76:94:C0", "Admin", "2.4GHz", 1, 1, 20, -55),
+            ("DC:A6:33:43:EC:0C", "Vodafone-DD14", "2.4GHz", 11, 11, 20, -64),
+            ("6A:55:D4:7D:0B:9B", "DIRECT-f1-EPSON-ET-4850", "2.4GHz", 11, 11, 20, -68),
+        ],
+    },
+    {
+        "survey_slug": "galerie-04-oct-2026-sanitized",
+        "room_slug": "galerie",
+        "label": "4 Oct 2026 Post-Relocation & Sanitization",
+        "captured_at": datetime(2026, 10, 4, 17, 0, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Galerie EAP650 relocated into open: -45 dBm on 5 GHz Ch 44 (80 MHz) & -48 dBm on 2.4 GHz Ch 1.",
+        "readings": [
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -45),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -48),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 40, 38, 40, -75),
+        ],
+    },
+    # 7. Büroecke
+    {
+        "survey_slug": "bueroecke-19-sep-2026-baseline",
+        "room_slug": "bueroecke",
+        "label": "20 Sep 2026 Historical Baseline (EAP330 40MHz Ch 11 Collision)",
+        "captured_at": datetime(2026, 9, 20, 22, 45, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Büroecke 22:45 scan — EAP330 wandered onto Ch 11 (9) @ 40 MHz alongside Epson (-64 dBm).",
+        "readings": [
+            ("7E:4C:BC:76:7C:40", "WuTangLan-IOT", "2.4GHz", 11, 11, 20, -52),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -54),
+            ("DE:A6:33:43:EC:10", "Vodafone Homespot", "2.4GHz", 1, 1, 20, -57),
+            ("84:16:F9:93:E9:2D", "TP-Link_5G_93E92D", "5GHz", 44, 42, 80, -63),
+            ("6A:55:D4:7D:0B:9B", "DIRECT-f1-EPSON-ET-4850", "2.4GHz", 11, 11, 20, -64),
+            ("86:16:F9:BF:E9:2D", "WuTangLan-Family", "2.4GHz", 11, 9, 40, -72),
+            ("76:4C:BC:76:94:C0", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -83),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 48, 42, 80, -92),
+        ],
+    },
+    {
+        "survey_slug": "bueroecke-04-oct-2026-sanitized",
+        "room_slug": "bueroecke",
+        "label": "4 Oct 2026 Post-Remediation",
+        "captured_at": datetime(2026, 10, 4, 19, 1, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Galerie Ch 44 (-52 dBm) & Ch 1 (-56 dBm); Epson & EAP330 eliminated.",
+        "readings": [
+            ("34:7E:5C:35:B0:F5", "SonosNet", "2.4GHz", 6, 6, 20, -44),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -52),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -56),
+            ("76:4C:BC:76:94:C0", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -70),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 40, 38, 40, -75),
+        ],
+    },
+    # 8. Wohnzimmer
+    {
+        "survey_slug": "wohnzimmer-19-sep-2026-baseline",
+        "room_slug": "wohnzimmer",
+        "label": "19 Sep 2026 Historical Baseline (EAP330 Co-Channel on Ch 44)",
+        "captured_at": datetime(2026, 9, 19, 21, 0, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Netlog_Wohnzimmer.jpg — TP-Link_5G_93E92D (-56 dBm) colliding on Ch 44 with AP-1 (-55 dBm).",
+        "readings": [
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -52),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -55),
+            ("84:16:F9:93:E9:2D", "TP-Link_5G_93E92D", "5GHz", 44, 42, 80, -56),
+            ("6A:55:D4:7D:0B:9B", "DIRECT-f1-EPSON-ET-4850", "2.4GHz", 11, 11, 20, -59),
+            ("DE:A6:33:43:EC:10", "Vodafone Homespot", "2.4GHz", 11, 11, 20, -67),
+            ("72:4C:BC:76:94:C1", "Admin", "5GHz", 48, 42, 80, -75),
+            ("0C:72:74:00:63:9B", "WuTangLan", "5GHz", 36, 50, 160, -86),
+        ],
+    },
+    {
+        "survey_slug": "wohnzimmer-04-oct-2026-sanitized",
+        "room_slug": "wohnzimmer",
+        "label": "4 Oct 2026 Post-Remediation",
+        "captured_at": datetime(2026, 10, 4, 19, 6, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "EAP330 powered off; Galerie Ch 44 (-54 dBm) & Ch 1 (-52 dBm) clean.",
+        "readings": [
+            ("54:2A:1B:63:FE:6F", "SonosNet", "2.4GHz", 6, 6, 20, -40),
+            ("B8:E9:37:E6:09:85", "SonosNet", "2.4GHz", 6, 6, 20, -45),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -52),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -54),
+        ],
+    },
+    # 9. Fernsehecke
+    {
+        "survey_slug": "fernsehecke-19-sep-2026-baseline",
+        "room_slug": "fernsehecke",
+        "label": "20 Sep 2026 Historical Baseline (Fritzbox -40 dBm & Epson -48 dBm)",
+        "captured_at": datetime(2026, 9, 20, 22, 5, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Fernsehecke 22:05 scan — Fritzbox WuTangLan at -40 dBm & Epson at -48 dBm.",
+        "readings": [
+            ("0C:72:74:00:63:9B", "WuTangLan", "5GHz", 116, 114, 160, -40),
+            ("6A:55:D4:7D:0B:9B", "DIRECT-f1-EPSON-ET-4850", "2.4GHz", 11, 11, 20, -48),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -53),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -55),
+            ("DE:A6:33:43:EC:10", "Vodafone Homespot", "2.4GHz", 1, 1, 20, -57),
+            ("76:4C:BC:76:94:C0", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -64),
+            ("86:16:F9:BF:E9:2D", "WuTangLan-Family", "2.4GHz", 6, 6, 20, -68),
+            ("84:16:F9:93:E9:2D", "TP-Link_5G_93E92D", "5GHz", 44, 42, 80, -72),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 48, 42, 80, -78),
+        ],
+    },
+    {
+        "survey_slug": "fernsehecke-04-oct-2026-sanitized",
+        "room_slug": "fernsehecke",
+        "label": "4 Oct 2026 Post-Remediation",
+        "captured_at": datetime(2026, 10, 4, 19, 6, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Fritzbox & Epson disabled; Galerie Ch 44 (-55 dBm) & Ch 1 (-58 dBm); HT 5 GHz Ch 48 clean (ANI 0).",
+        "readings": [
+            ("94:9F:3E:C0:EE:A2", "SonosHT-5G", "5GHz", 48, 46, 80, -42),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -55),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -58),
+            ("76:4C:BC:76:94:C0", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -68),
+        ],
+    },
+    # 10. Küche
+    {
+        "survey_slug": "kueche-19-sep-2026-baseline",
+        "room_slug": "kueche",
+        "label": "20 Sep 2026 Historical Baseline (Epson -47 dBm in Kitchen)",
+        "captured_at": datetime(2026, 9, 20, 22, 17, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "küche_2 22:17 scan — Epson Wi-Fi Direct at -47 dBm on Ch 11; Kitchen AP offline in scan.",
+        "readings": [
+            ("6A:55:D4:7D:0B:9B", "DIRECT-f1-EPSON-ET-4850", "2.4GHz", 11, 11, 20, -47),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -55),
+            ("DE:A6:33:43:EC:0E", "Vodafone Hotspot", "2.4GHz", 1, 1, 20, -55),
+            ("76:4C:BC:76:7C:40", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -60),
+            ("84:16:F9:93:E9:2D", "TP-Link_5G_93E92D", "5GHz", 44, 42, 80, -67),
+            ("86:16:F9:BF:E9:2D", "WuTangLan-Family", "2.4GHz", 6, 6, 20, -84),
+        ],
+    },
+    {
+        "survey_slug": "kueche-04-oct-2026-sanitized",
+        "room_slug": "kueche",
+        "label": "4 Oct 2026 Post-Remediation (Epson Disabled -> ANI 0)",
+        "captured_at": datetime(2026, 10, 4, 19, 6, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:7C:41",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Epson ET-4850 Wi-Fi Direct disabled -> Küche SYMFONISK OFDM ANI dropped to 0.",
+        "readings": [
+            ("34:7E:5C:38:26:E3", "SonosNet", "2.4GHz", 6, 6, 20, -45),
+            ("76:4C:BC:76:7C:41", "WuTangLan-Family", "5GHz", 44, 42, 80, -55),
+            ("76:4C:BC:76:94:C0", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -55),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 40, 38, 40, -58),
+        ],
+    },
+    # 11. Keller
+    {
+        "survey_slug": "keller-19-sep-2026-baseline",
+        "room_slug": "keller",
+        "label": "20 Sep 2026 Historical Baseline (Fritzbox -39 dBm @ 40 MHz)",
+        "captured_at": datetime(2026, 9, 20, 22, 1, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:94:C1",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Keller 22:01 scan — Fritzbox 6660 running 40 MHz wide 2.4 GHz on Ch 11 (9) at -39 dBm.",
+        "readings": [
+            ("0C:72:74:00:63:9A", "WuTangLan", "2.4GHz", 11, 9, 40, -39),
+            ("76:4C:BC:76:94:C0", "WuTangLan-Family", "2.4GHz", 1, 1, 20, -63),
+            ("1C:23:A2:7A:E3:7A", "WLAN-A7C604", "2.4GHz", 1, 1, 20, -66),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 48, 42, 80, -68),
+            ("1C:23:A2:7A:E3:7B", "WLAN-A7C604", "5GHz", 52, 50, 80, -75),
+            ("84:16:F9:93:E9:2D", "TP-Link_5G_93E92D", "5GHz", 44, 42, 80, -76),
+            ("86:16:F9:BF:E9:2F", "WuTangLan-IOT", "2.4GHz", 6, 6, 20, -82),
+        ],
+    },
+    {
+        "survey_slug": "keller-04-oct-2026-sanitized",
+        "room_slug": "keller",
+        "label": "4 Oct 2026 Post-Remediation (Fritzbox Wi-Fi Disabled)",
+        "captured_at": datetime(2026, 10, 4, 19, 0, 0, tzinfo=timezone.utc),
+        "connected_bssid": "76:4C:BC:76:94:C1",
+        "connected_ssid": "WuTangLan-Family",
+        "link_speed_mbps": 1201,
+        "notes": "Fritzbox 6660 rogue 40 MHz Wi-Fi disabled; Kitchen AP Ch 11 (-63 dBm) & Ch 40 (-68 dBm).",
+        "readings": [
+            ("76:4C:BC:76:94:C0", "WuTangLan-Family", "2.4GHz", 11, 11, 20, -63),
+            ("1C:23:A2:7A:E3:7A", "WLAN-A7C604", "2.4GHz", 1, 1, 20, -66),
+            ("76:4C:BC:76:94:C1", "WuTangLan-Family", "5GHz", 40, 38, 40, -68),
+        ],
+    },
+]
+
 

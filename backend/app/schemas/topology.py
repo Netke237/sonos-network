@@ -192,8 +192,16 @@ class NetworkDeviceRead(BaseModel):
 
 
 class RoomMatrixItemDto(RoomRead):
+    best_5ghz_dbm: int | None = None
+    best_24ghz_dbm: int | None = None
+    best_ap_name: str | None = None
+    link_speed_mbps: int | None = None
+    rogue_count: int = 0
+    neighbor_count: int = 0
+    wifi_health_grade: str = "GOOD"
     devices: list[NetworkDeviceRead] = []
     switch_ports: list[SwitchPortRead] = []
+
 
 
 class FloorMatrixItemDto(FloorRead):
@@ -306,4 +314,124 @@ class PlayerRfSample(BaseModel):
     phy_error_total: int | None = None
     phy_error_rate: float
     captured_at: datetime
+
+
+class BssidClassificationResult(BaseModel):
+    classification: str
+    ap_device_slug: str | None = None
+    ap_name: str | None = None
+    radio_band: str | None = None
+
+
+class AccessPointRadioRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str | None = None
+    radio_key: str
+    ap_device_slug: str
+    ap_name: str
+    room_slug: str | None = None
+    band: str
+    base_mac: str
+    bssid_suffix: str
+    derived_bssids: list[str] = []
+    channel: int
+    center_channel: int
+    width_mhz: int
+    tx_power_dbm: int | None = None
+    airtime_utilization_pct: float | None = None
+    is_non_dfs: bool = True
+    status: str = "CONNECTED"
+
+
+class OmadaClientAssociationDto(BaseModel):
+    client_name: str
+    mac_address: str
+    ip_address: str | None = None
+    room_slug: str | None = None
+    ap_device_slug: str
+    ap_name: str
+    connected_bssid: str
+    ssid: str
+    band: str
+    channel: int
+    rssi_dbm: int
+    link_speed_mbps: int
+
+
+class WiFiInfraSnapshot(BaseModel):
+    captured_at: datetime
+    omada_controller_url: str
+    omada_reachable: bool
+    controller_status: str
+    degraded_reason: str | None = None
+    radios: list[AccessPointRadioRead]
+    clients: list[OmadaClientAssociationDto] = []
+
+
+class BssidReadingInput(BaseModel):
+    bssid: str
+    ssid: str | None = None
+    band: str
+    channel: int
+    center_channel: int | None = None
+    width_mhz: int = 20
+    rssi_dbm: int
+
+
+class BssidReadingSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str | None = None
+    bssid: str
+    ssid: str | None = None
+    band: str
+    channel: int
+    center_channel: int
+    width_mhz: int
+    rssi_dbm: int
+    classification: str
+    ap_device_slug: str | None = None
+    ap_name: str | None = None
+    is_connected: bool = False
+
+
+class WiFiRoomSurveyCreate(BaseModel):
+    label: str | None = None
+    trigger_mode: str = "MANUAL_SURVEY"
+    connected_bssid: str | None = None
+    connected_ssid: str | None = None
+    link_speed_mbps: int | None = None
+    frequency_mhz: int | None = None
+    notes: str | None = None
+    readings: list[BssidReadingInput] | None = None
+
+
+class WiFiRoomSurveySchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str | None = None
+    survey_slug: str
+    room_id: str | None = None
+    room_slug: str
+    room_name: str
+    label: str
+    trigger_mode: str
+    captured_at: datetime
+    connected_bssid: str | None = None
+    connected_ssid: str | None = None
+    link_speed_mbps: int | None = None
+    frequency_mhz: int | None = None
+    best_5ghz_dbm: int | None = None
+    best_24ghz_dbm: int | None = None
+    best_ap_slug: str | None = None
+    best_ap_name: str | None = None
+    rogue_count: int = 0
+    neighbor_count: int = 0
+    grade_5ghz: str
+    grade_24ghz: str
+    wifi_health_grade: str
+    notes: str | None = None
+    readings: list[BssidReadingSchema] = []
+
 

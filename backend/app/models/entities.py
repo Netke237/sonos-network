@@ -48,6 +48,14 @@ class StpPortState(str, Enum):
     DISABLED = "DISABLED"
 
 
+class BssidClassification(str, Enum):
+    OWN_MANAGED_AP = "OWN_MANAGED_AP"
+    SONOSNET_MESH = "SONOSNET_MESH"
+    ROGUE_OWN_RADIO = "ROGUE_OWN_RADIO"
+    NEIGHBOR_WIFI = "NEIGHBOR_WIFI"
+
+
+
 class Floor(Base):
     __tablename__ = "floors"
 
@@ -219,4 +227,105 @@ class SonosMeshLink(Base):
     stp_state: Mapped[str] = mapped_column(
         String(32), nullable=False, default=StpPortState.FORWARDING.value
     )
+
+
+class AccessPointRadio(Base):
+    __tablename__ = "access_point_radios"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_new_uuid)
+    radio_key: Mapped[str] = mapped_column(
+        String(96), unique=True, index=True, nullable=False
+    )
+    ap_device_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("network_devices.id"), index=True, nullable=True
+    )
+    ap_device_slug: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    ap_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    room_slug: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    band: Mapped[str] = mapped_column(String(32), nullable=False)
+    base_mac: Mapped[str] = mapped_column(String(32), nullable=False)
+    bssid_suffix: Mapped[str] = mapped_column(String(32), nullable=False)
+    derived_bssids_csv: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    channel: Mapped[int] = mapped_column(Integer, nullable=False)
+    center_channel: Mapped[int] = mapped_column(Integer, nullable=False)
+    width_mhz: Mapped[int] = mapped_column(Integer, nullable=False)
+    tx_power_dbm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    airtime_utilization_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_non_dfs: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="CONNECTED"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class WiFiRoomSurvey(Base):
+    __tablename__ = "wifi_room_surveys"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_new_uuid)
+    survey_slug: Mapped[str] = mapped_column(
+        String(160), unique=True, index=True, nullable=False
+    )
+    room_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("rooms.id"), index=True, nullable=False
+    )
+    room_slug: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    room_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    trigger_mode: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="HISTORICAL_SEED"
+    )
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=_utcnow
+    )
+    connected_bssid: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    connected_ssid: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    link_speed_mbps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    frequency_mhz: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    best_5ghz_dbm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    best_24ghz_dbm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    best_ap_slug: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    best_ap_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    rogue_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    neighbor_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    grade_5ghz: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=HealthGrade.GOOD.value
+    )
+    grade_24ghz: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=HealthGrade.GOOD.value
+    )
+    wifi_health_grade: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=HealthGrade.GOOD.value
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BssidReading(Base):
+    __tablename__ = "bssid_readings"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_new_uuid)
+    reading_key: Mapped[str | None] = mapped_column(
+        String(200), unique=True, index=True, nullable=True
+    )
+    survey_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("wifi_room_surveys.id"), index=True, nullable=False
+    )
+    room_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("rooms.id"), index=True, nullable=False
+    )
+    bssid: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    ssid: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    band: Mapped[str] = mapped_column(String(32), nullable=False)
+    channel: Mapped[int] = mapped_column(Integer, nullable=False)
+    center_channel: Mapped[int] = mapped_column(Integer, nullable=False)
+    width_mhz: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    rssi_dbm: Mapped[int] = mapped_column(Integer, nullable=False)
+    classification: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=BssidClassification.NEIGHBOR_WIFI.value
+    )
+    ap_device_slug: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ap_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    is_connected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
 

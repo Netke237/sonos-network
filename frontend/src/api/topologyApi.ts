@@ -8,7 +8,9 @@ import type {
   NetworkDevice,
   Room,
   SwitchPort,
+  WiFiRoomSurvey,
 } from "../types/topology";
+
 
 const API_BASE =
   (import.meta as unknown as { env?: Record<string, string> }).env
@@ -148,3 +150,43 @@ export async function createSwitchPort(payload: {
   }
   return resp.json();
 }
+
+export async function fetchRoomSurveys(
+  roomSlug: string
+): Promise<WiFiRoomSurvey[]> {
+  const resp = await fetch(`${API_BASE}/api/rooms/${roomSlug}/surveys`);
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch surveys for ${roomSlug}: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function createRoomSurvey(
+  roomSlug: string,
+  payload: {
+    label?: string;
+    trigger_mode?: string;
+    connected_bssid?: string;
+    link_speed_mbps?: number;
+    readings?: Array<{
+      bssid: string;
+      ssid?: string;
+      band: string;
+      channel: number;
+      center_channel?: number;
+      width_mhz?: number;
+      rssi_dbm: number;
+    }>;
+  }
+): Promise<WiFiRoomSurvey> {
+  const resp = await fetch(`${API_BASE}/api/rooms/${roomSlug}/surveys`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to create survey for ${roomSlug}: ${resp.status}`);
+  }
+  return resp.json();
+}
+

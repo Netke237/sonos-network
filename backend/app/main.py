@@ -14,6 +14,11 @@ from app.modules.sonos_telemetry import (
     HttpSonosAdapter,
     SonosTelemetryPort,
 )
+from app.modules.wifi_omada import (
+    FakeWiFiAdapter,
+    OmadaAndAdbWiFiAdapter,
+    WiFiTelemetryPort,
+)
 from app.repositories.topology_repository import SqlAlchemyTopologyRepository
 from app.schemas.topology import (
     FloorCreate,
@@ -32,6 +37,9 @@ from app.schemas.topology import (
     SwitchPortCreate,
     SwitchPortRead,
     SwitchPortUpdate,
+    WiFiInfraSnapshot,
+    WiFiRoomSurveyCreate,
+    WiFiRoomSurveySchema,
 )
 from app.seeds.initial_seed import seed_initial_data
 
@@ -39,6 +47,7 @@ from app.seeds.initial_seed import seed_initial_data
 def create_app(
     database_url: str | None = None,
     sonos_adapter: SonosTelemetryPort | None = None,
+    wifi_adapter: WiFiTelemetryPort | None = None,
 ) -> FastAPI:
     engine, session_factory = build_engine_and_sessionmaker(database_url)
     default_adapter: SonosTelemetryPort = sonos_adapter or (
@@ -46,12 +55,18 @@ def create_app(
         if os.getenv("SONOS_USE_LIVE_HTTP") == "1"
         else FakeSonosAdapter(probe_interval_sec=0.01)
     )
+    default_wifi_adapter: WiFiTelemetryPort = wifi_adapter or (
+        OmadaAndAdbWiFiAdapter()
+        if os.getenv("OMADA_USE_LIVE_HTTP") == "1"
+        else FakeWiFiAdapter()
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.engine = engine
         app.state.session_factory = session_factory
         app.state.sonos_adapter = default_adapter
+        app.state.wifi_adapter = default_wifi_adapter
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         async with session_factory() as session:
@@ -69,6 +84,7 @@ def create_app(
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.sonos_adapter = default_adapter
+    app.state.wifi_adapter = default_wifi_adapter
 
     app.add_middleware(
         CORSMiddleware,
@@ -90,6 +106,10 @@ def create_app(
 
     def get_sonos_adapter(request: Request) -> SonosTelemetryPort:
         return request.app.state.sonos_adapter
+
+    def get_wifi_adapter(request: Request) -> WiFiTelemetryPort:
+        return request.app.state.wifi_adapter
+
 
     @app.get("/api/health")
     async def health_check() -> dict[str, str]:
@@ -315,7 +335,46 @@ def create_app(
         await repo.apply_ghost_flush(result)
         return result
 
+    # --- Wi-Fi Infrastructure & Room BSSID Surveys ---
+    @app.get("/api/wifi/infrastructure", response_model=WiFiInfraSnapshot)
+    async def get_wifi_infrastructure(
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+        wifi_adapter: WiFiTelemetryPort = Depends(get_wifi_adapter),
+    ) -> WiFiInfraSnapshot:
+        infra = await wifi_adapter.collect_wifi_infrastructure()
+        return await repo.sync_wifi_infrastructure(infra)
+
+    @app.get(
+        "/api/rooms/{room_slug}/surveys",
+        response_model=list[WiFiRoomSurveySchema],
+    )
+    async def list_room_surveys(
+        room_slug: str,
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+    ) -> list[WiFiRoomSurveySchema]:
+        surveys = await repo.list_room_surveys(room_slug)
+        if surveys is None:
+            raise HTTPException(status_code=404, detail="Room not found")
+        return surveys
+
+    @app.post(
+        "/api/rooms/{room_slug}/surveys",
+        response_model=WiFiRoomSurveySchema,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_room_survey(
+        room_slug: str,
+        payload: WiFiRoomSurveyCreate = Body(default_factory=WiFiRoomSurveyCreate),
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+        wifi_adapter: WiFiTelemetryPort = Depends(get_wifi_adapter),
+    ) -> WiFiRoomSurveySchema:
+        survey = await repo.create_room_survey(room_slug, payload, wifi_adapter)
+        if survey is None:
+            raise HTTPException(status_code=404, detail="Room not found")
+        return survey
+
     return app
+
 
 
 app = create_app()

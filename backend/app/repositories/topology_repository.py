@@ -7,6 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import (
+    AccessPointRadio,
+    BssidReading,
     ConnectionMode,
     DeviceRole,
     Floor,
@@ -15,9 +17,12 @@ from app.models.entities import (
     SonosMeshLink,
     SonosTelemetrySnapshot,
     SwitchPort,
+    WiFiRoomSurvey,
 )
 from app.modules.sonos_telemetry import EXPECTED_STP_ROOT
+from app.modules.wifi_omada import WiFiTelemetryPort, build_wifi_room_survey
 from app.schemas.topology import (
+    BssidReadingSchema,
     FloorCreate,
     FloorMatrixItemDto,
     FloorRead,
@@ -37,7 +42,11 @@ from app.schemas.topology import (
     SwitchPortCreate,
     SwitchPortRead,
     SwitchPortUpdate,
+    WiFiInfraSnapshot,
+    WiFiRoomSurveyCreate,
+    WiFiRoomSurveySchema,
 )
+
 
 
 def _slugify(value: str) -> str:
@@ -511,6 +520,211 @@ class SqlAlchemyTopologyRepository:
                 row.is_ghost_group = False
         await self._session.commit()
 
+    async def get_room_by_slug_or_id(self, room_ref: str) -> Room | None:
+        res = await self._session.execute(
+            select(Room).where((Room.slug == room_ref) | (Room.id == room_ref))
+        )
+        return res.scalar_one_or_none()
+
+    async def sync_wifi_infrastructure(
+        self, infra: WiFiInfraSnapshot
+    ) -> WiFiInfraSnapshot:
+        existing_res = await self._session.execute(select(AccessPointRadio))
+        by_key = {r.radio_key: r for r in existing_res.scalars().all()}
+        for r in infra.radios:
+            row = by_key.get(r.radio_key)
+            if row is None:
+                row = AccessPointRadio(
+                    radio_key=r.radio_key,
+                    ap_device_slug=r.ap_device_slug,
+                    ap_name=r.ap_name,
+                    room_slug=r.room_slug,
+                    band=r.band,
+                    base_mac=r.base_mac,
+                    bssid_suffix=r.bssid_suffix,
+                    derived_bssids_csv=",".join(r.derived_bssids),
+                    channel=r.channel,
+                    center_channel=r.center_channel,
+                    width_mhz=r.width_mhz,
+                    tx_power_dbm=r.tx_power_dbm,
+                    airtime_utilization_pct=r.airtime_utilization_pct,
+                    is_non_dfs=r.is_non_dfs,
+                    status=r.status,
+                )
+                self._session.add(row)
+            else:
+                row.channel = r.channel
+                row.center_channel = r.center_channel
+                row.width_mhz = r.width_mhz
+                row.tx_power_dbm = r.tx_power_dbm
+                row.airtime_utilization_pct = r.airtime_utilization_pct
+                row.is_non_dfs = r.is_non_dfs
+                row.status = r.status
+        await self._session.commit()
+        return infra
+
+    async def list_room_surveys(self, room_ref: str) -> list[WiFiRoomSurveySchema] | None:
+        room = await self.get_room_by_slug_or_id(room_ref)
+        if not room:
+            return None
+
+        surveys_res = await self._session.execute(
+            select(WiFiRoomSurvey)
+            .where(WiFiRoomSurvey.room_id == room.id)
+            .order_by(WiFiRoomSurvey.captured_at.desc())
+        )
+        surveys = list(surveys_res.scalars().all())
+        if not surveys:
+            return []
+
+        survey_ids = [s.id for s in surveys]
+        readings_res = await self._session.execute(
+            select(BssidReading).where(BssidReading.survey_id.in_(survey_ids))
+        )
+        readings_by_survey: dict[str, list[BssidReadingSchema]] = {}
+        for br in readings_res.scalars().all():
+            readings_by_survey.setdefault(br.survey_id, []).append(
+                BssidReadingSchema(
+                    id=br.id,
+                    bssid=br.bssid,
+                    ssid=br.ssid,
+                    band=br.band,
+                    channel=br.channel,
+                    center_channel=br.center_channel,
+                    width_mhz=br.width_mhz,
+                    rssi_dbm=br.rssi_dbm,
+                    classification=br.classification,
+                    ap_device_slug=br.ap_device_slug,
+                    ap_name=br.ap_name,
+                    is_connected=br.is_connected,
+                )
+            )
+        for s_list in readings_by_survey.values():
+            s_list.sort(key=lambda item: item.rssi_dbm, reverse=True)
+
+        return [
+            WiFiRoomSurveySchema(
+                id=s.id,
+                survey_slug=s.survey_slug,
+                room_id=s.room_id,
+                room_slug=s.room_slug,
+                room_name=s.room_name,
+                label=s.label,
+                trigger_mode=s.trigger_mode,
+                captured_at=s.captured_at,
+                connected_bssid=s.connected_bssid,
+                connected_ssid=s.connected_ssid,
+                link_speed_mbps=s.link_speed_mbps,
+                frequency_mhz=s.frequency_mhz,
+                best_5ghz_dbm=s.best_5ghz_dbm,
+                best_24ghz_dbm=s.best_24ghz_dbm,
+                best_ap_slug=s.best_ap_slug,
+                best_ap_name=s.best_ap_name,
+                rogue_count=s.rogue_count,
+                neighbor_count=s.neighbor_count,
+                grade_5ghz=s.grade_5ghz,
+                grade_24ghz=s.grade_24ghz,
+                wifi_health_grade=s.wifi_health_grade,
+                notes=s.notes,
+                readings=readings_by_survey.get(s.id, []),
+            )
+            for s in surveys
+        ]
+
+    async def create_room_survey(
+        self,
+        room_ref: str,
+        payload: WiFiRoomSurveyCreate,
+        wifi_adapter: WiFiTelemetryPort,
+    ) -> WiFiRoomSurveySchema | None:
+        room = await self.get_room_by_slug_or_id(room_ref)
+        if not room:
+            return None
+
+        if payload.readings is not None and len(payload.readings) > 0:
+            survey_slug = f"{room.slug}-survey-{uuid.uuid4().hex[:8]}"
+            built = build_wifi_room_survey(
+                room_slug=room.slug,
+                room_name=room.name,
+                survey_slug=survey_slug,
+                label=payload.label or "Manual Room Wi-Fi Survey",
+                trigger_mode=payload.trigger_mode,
+                connected_bssid=payload.connected_bssid,
+                connected_ssid=payload.connected_ssid,
+                link_speed_mbps=payload.link_speed_mbps,
+                frequency_mhz=payload.frequency_mhz,
+                notes=payload.notes,
+                readings=payload.readings,
+                room_id=room.id,
+            )
+        else:
+            built = await wifi_adapter.capture_room_wifi_scan(
+                room_slug=room.slug,
+                trigger_mode=payload.trigger_mode,
+                label=payload.label,
+                connected_bssid=payload.connected_bssid,
+                link_speed_mbps=payload.link_speed_mbps,
+                readings=None,
+            )
+            built.room_id = room.id
+            built.room_name = room.name
+            if payload.notes:
+                built.notes = payload.notes
+
+        survey_row = WiFiRoomSurvey(
+            survey_slug=built.survey_slug,
+            room_id=room.id,
+            room_slug=room.slug,
+            room_name=room.name,
+            label=built.label,
+            trigger_mode=built.trigger_mode,
+            captured_at=built.captured_at,
+            connected_bssid=built.connected_bssid,
+            connected_ssid=built.connected_ssid,
+            link_speed_mbps=built.link_speed_mbps,
+            frequency_mhz=built.frequency_mhz,
+            best_5ghz_dbm=built.best_5ghz_dbm,
+            best_24ghz_dbm=built.best_24ghz_dbm,
+            best_ap_slug=built.best_ap_slug,
+            best_ap_name=built.best_ap_name,
+            rogue_count=built.rogue_count,
+            neighbor_count=built.neighbor_count,
+            grade_5ghz=built.grade_5ghz,
+            grade_24ghz=built.grade_24ghz,
+            wifi_health_grade=built.wifi_health_grade,
+            notes=built.notes,
+        )
+        self._session.add(survey_row)
+        await self._session.flush()
+
+        built.id = survey_row.id
+        for idx, r_item in enumerate(built.readings, start=1):
+            br_row = BssidReading(
+                reading_key=f"{built.survey_slug}:{idx}:{r_item.bssid}",
+                survey_id=survey_row.id,
+                room_id=room.id,
+                bssid=r_item.bssid,
+                ssid=r_item.ssid,
+                band=r_item.band,
+                channel=r_item.channel,
+                center_channel=r_item.center_channel,
+                width_mhz=r_item.width_mhz,
+                rssi_dbm=r_item.rssi_dbm,
+                classification=r_item.classification,
+                ap_device_slug=r_item.ap_device_slug,
+                ap_name=r_item.ap_name,
+                is_connected=r_item.is_connected,
+            )
+            self._session.add(br_row)
+
+        if built.best_5ghz_dbm is not None:
+            room.best_5ghz_rssi_dbm = built.best_5ghz_dbm
+        if built.best_24ghz_dbm is not None:
+            room.best_24ghz_rssi_dbm = built.best_24ghz_dbm
+
+        await self._session.commit()
+        return built
+
     async def get_house_overview(
         self, include_archived: bool = False
     ) -> HouseOverviewDto:
@@ -519,6 +733,15 @@ class SqlAlchemyTopologyRepository:
         devices = await self.list_devices(include_archived=include_archived)
         ports = await self.list_switch_ports(include_archived=include_archived)
         latest_sonos = await self.get_sonos_telemetry()
+
+        # Fetch latest WiFiRoomSurvey per room (newest captured_at first)
+        all_surveys_res = await self._session.execute(
+            select(WiFiRoomSurvey).order_by(WiFiRoomSurvey.captured_at.desc())
+        )
+        latest_survey_by_room: dict[str, WiFiRoomSurvey] = {}
+        for s in all_surveys_res.scalars().all():
+            if s.room_id not in latest_survey_by_room:
+                latest_survey_by_room[s.room_id] = s
 
         telem_by_uuid: dict[str, PlayerTelemetryDto] = {}
         if latest_sonos:
@@ -554,8 +777,32 @@ class SqlAlchemyTopologyRepository:
 
         rooms_by_floor: dict[str, list[RoomMatrixItemDto]] = {}
         for r in rooms:
+            latest_s = latest_survey_by_room.get(r.id)
+            best_5g = (
+                latest_s.best_5ghz_dbm
+                if latest_s and latest_s.best_5ghz_dbm is not None
+                else r.best_5ghz_rssi_dbm
+            )
+            best_24g = (
+                latest_s.best_24ghz_dbm
+                if latest_s and latest_s.best_24ghz_dbm is not None
+                else r.best_24ghz_rssi_dbm
+            )
+            base_room_dict = RoomRead.model_validate(r).model_dump()
+            base_room_dict["best_5ghz_rssi_dbm"] = best_5g
+            base_room_dict["best_24ghz_rssi_dbm"] = best_24g
+
             room_dto = RoomMatrixItemDto(
-                **RoomRead.model_validate(r).model_dump(),
+                **base_room_dict,
+                best_5ghz_dbm=best_5g,
+                best_24ghz_dbm=best_24g,
+                best_ap_name=latest_s.best_ap_name if latest_s else "Galerie EAP650",
+                link_speed_mbps=latest_s.link_speed_mbps if latest_s else 1201,
+                rogue_count=latest_s.rogue_count if latest_s else 0,
+                neighbor_count=latest_s.neighbor_count if latest_s else 0,
+                wifi_health_grade=(
+                    latest_s.wifi_health_grade if latest_s else r.health_grade
+                ),
                 devices=devices_by_room.get(r.id, []),
                 switch_ports=ports_by_room.get(r.id, []),
             )
@@ -595,4 +842,5 @@ class SqlAlchemyTopologyRepository:
             latest_sonos_captured_at=latest_sonos.captured_at if latest_sonos else None,
             floors=floor_dtos,
         )
+
 

@@ -83,10 +83,65 @@ export interface Room {
   is_archived: boolean;
 }
 
+export type BssidClassification =
+  | "OWN_MANAGED_AP"
+  | "SONOSNET_MESH"
+  | "ROGUE_OWN_RADIO"
+  | "NEIGHBOR_WIFI";
+
+export interface BssidReading {
+  id?: string | null;
+  bssid: string;
+  ssid?: string | null;
+  band: string;
+  channel: number;
+  center_channel: number;
+  width_mhz: number;
+  rssi_dbm: number;
+  classification: BssidClassification;
+  ap_device_slug?: string | null;
+  ap_name?: string | null;
+  is_connected?: boolean;
+}
+
+export interface WiFiRoomSurvey {
+  id?: string | null;
+  survey_slug: string;
+  room_id?: string | null;
+  room_slug: string;
+  room_name: string;
+  label: string;
+  trigger_mode: string;
+  captured_at: string;
+  connected_bssid?: string | null;
+  connected_ssid?: string | null;
+  link_speed_mbps?: number | null;
+  frequency_mhz?: number | null;
+  best_5ghz_dbm?: number | null;
+  best_24ghz_dbm?: number | null;
+  best_ap_slug?: string | null;
+  best_ap_name?: string | null;
+  rogue_count: number;
+  neighbor_count: number;
+  grade_5ghz: HealthGrade;
+  grade_24ghz: HealthGrade;
+  wifi_health_grade: HealthGrade;
+  notes?: string | null;
+  readings: BssidReading[];
+}
+
 export interface RoomMatrixItem extends Room {
+  best_5ghz_dbm?: number | null;
+  best_24ghz_dbm?: number | null;
+  best_ap_name?: string | null;
+  link_speed_mbps?: number | null;
+  rogue_count?: number;
+  neighbor_count?: number;
+  wifi_health_grade?: HealthGrade;
   devices: NetworkDevice[];
   switch_ports: SwitchPort[];
 }
+
 
 export interface FloorMatrixItem extends Floor {
   rooms: RoomMatrixItem[];

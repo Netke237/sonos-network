@@ -27,7 +27,15 @@ const mockOverview = {
           health_grade: "EXCELLENT",
           best_5ghz_rssi_dbm: -72,
           best_24ghz_rssi_dbm: -82,
+          best_5ghz_dbm: -72,
+          best_24ghz_dbm: -82,
+          best_ap_name: "Galerie EAP650",
+          link_speed_mbps: 1201,
+          rogue_count: 0,
+          neighbor_count: 0,
+          wifi_health_grade: "MARGINAL",
           description: "Attic bedroom",
+
           is_archived: false,
           devices: [
             {
@@ -238,9 +246,112 @@ describe("T1 & T2 Floor-by-Floor Room Matrix, Sonos Telemetry & Ghost Group Acti
             { status: 201 }
           );
         }
+        if (url.includes("/api/rooms/") && url.endsWith("/surveys") && method === "GET") {
+          return new Response(
+            JSON.stringify([
+              {
+                id: "sv-oct",
+                survey_slug: "nicolas-08-oct-2026-sanitized",
+                room_id: "rm-nicolas",
+                room_slug: "nicolas",
+                room_name: "Nicolas",
+                label: "8 Oct 2026 Post-Remediation Verification",
+                trigger_mode: "HISTORICAL_SEED",
+                captured_at: "2026-10-08T22:43:00Z",
+                connected_bssid: "76:4C:BC:76:7C:41",
+                connected_ssid: "WuTangLan-Family",
+                link_speed_mbps: 1201,
+                best_5ghz_dbm: -72,
+                best_24ghz_dbm: null,
+                best_ap_name: "Galerie EAP650",
+                rogue_count: 0,
+                neighbor_count: 0,
+                grade_5ghz: "MARGINAL",
+                grade_24ghz: "CRITICAL",
+                wifi_health_grade: "MARGINAL",
+                readings: [
+                  {
+                    bssid: "76:4C:BC:76:7C:41",
+                    ssid: "WuTangLan-Family",
+                    band: "5GHz",
+                    channel: 44,
+                    center_channel: 42,
+                    width_mhz: 80,
+                    rssi_dbm: -75,
+                    classification: "OWN_MANAGED_AP",
+                    ap_device_slug: "galerie-ap",
+                    ap_name: "Galerie EAP650",
+                    is_connected: true,
+                  },
+                ],
+              },
+              {
+                id: "sv-sep",
+                survey_slug: "nicolas-19-sep-2026-baseline",
+                room_id: "rm-nicolas",
+                room_slug: "nicolas",
+                room_name: "Nicolas",
+                label: "20 Sep 2026 Historical Baseline",
+                trigger_mode: "HISTORICAL_SEED",
+                captured_at: "2026-09-20T20:54:00Z",
+                connected_bssid: "0C:72:74:00:63:9B",
+                connected_ssid: "WuTangLan",
+                link_speed_mbps: 2401,
+                best_5ghz_dbm: -70,
+                best_24ghz_dbm: -67,
+                best_ap_name: "Galerie EAP650",
+                rogue_count: 4,
+                neighbor_count: 1,
+                grade_5ghz: "MARGINAL",
+                grade_24ghz: "GOOD",
+                wifi_health_grade: "GOOD",
+                readings: [
+                  {
+                    bssid: "84:16:F9:93:E9:2D",
+                    ssid: "TP-Link_5G_93E92D",
+                    band: "5GHz",
+                    channel: 44,
+                    center_channel: 42,
+                    width_mhz: 80,
+                    rssi_dbm: -55,
+                    classification: "ROGUE_OWN_RADIO",
+                    ap_device_slug: null,
+                    ap_name: null,
+                    is_connected: false,
+                  },
+                ],
+              },
+            ]),
+            { status: 200 }
+          );
+        }
+        if (url.includes("/api/rooms/") && url.endsWith("/surveys") && method === "POST") {
+          return new Response(
+            JSON.stringify({
+              id: "sv-new",
+              survey_slug: "nicolas-survey-new",
+              room_slug: "nicolas",
+              room_name: "Nicolas",
+              label: "Walkthrough Attic Check",
+              trigger_mode: "MANUAL_SURVEY",
+              captured_at: "2026-10-11T12:10:00Z",
+              best_5ghz_dbm: -71,
+              best_24ghz_dbm: null,
+              best_ap_name: "Galerie EAP650",
+              rogue_count: 0,
+              neighbor_count: 0,
+              grade_5ghz: "MARGINAL",
+              grade_24ghz: "CRITICAL",
+              wifi_health_grade: "MARGINAL",
+              readings: [],
+            }),
+            { status: 201 }
+          );
+        }
         if (method === "DELETE") {
           return new Response(JSON.stringify({ is_archived: true }), { status: 200 });
         }
+
         return new Response(JSON.stringify({}), { status: 200 });
       })
     );
@@ -318,5 +429,45 @@ describe("T1 & T2 Floor-by-Floor Room Matrix, Sonos Telemetry & Ghost Group Acti
       );
     });
   });
+
+  it("renders T3 Wi-Fi coverage summary on room cards and opens Room Wi-Fi Spectrum & Survey Drawer to inspect BSSIDs and submit a new WiFiRoomSurvey", async () => {
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getAllByText("Nicolas").length).toBeGreaterThan(0);
+    });
+
+    // Verify covering AP name, link speed Mbps, and Wi-Fi health grade badge on room cards
+    expect(screen.getAllByText(/Galerie EAP650/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1201 Mbps/i).length).toBeGreaterThan(0);
+
+    // Click "Inspect Room Wi-Fi" button on Nicolas room card
+    const inspectBtns = screen.getAllByRole("button", { name: /Inspect Room Wi-Fi/i });
+    fireEvent.click(inspectBtns[0]);
+
+    // Expect BSSID Spectrum Table in drawer to render heard BSSIDs & classifications
+    await waitFor(() => {
+      expect(screen.getByText(/76:4C:BC:76:7C:41/i)).toBeInTheDocument();
+    });
+    expect(screen.getAllByText(/OWN_MANAGED_AP/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/ROGUE_OWN_RADIO/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/TP-Link_5G_93E92D/i)).toBeInTheDocument();
+
+    // Submit a new WiFiRoomSurvey via the drawer form
+    const labelInput = screen.getByLabelText(/Survey Label/i);
+    fireEvent.change(labelInput, { target: { value: "Walkthrough Attic Check" } });
+
+    const submitSurveyBtn = screen.getByRole("button", {
+      name: /Record Room Wi-Fi Survey/i,
+    });
+    fireEvent.click(submitSurveyBtn);
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/rooms/nicolas/surveys"),
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+  });
 });
+
 

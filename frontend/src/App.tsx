@@ -4,18 +4,22 @@ import {
   archiveRoom,
   createDevice,
   createRoom,
+  createRoomSurvey,
   createSwitchPort,
   fetchHouseOverview,
+  fetchRoomSurveys,
   flushGhostGroups,
   pollLiveSonosNow,
 } from "./api/topologyApi";
 import type {
+  BssidClassification,
   ConnectionMode,
   DeviceRole,
   FloorMatrixItem,
   HealthGrade,
   HouseOverview,
   RoomMatrixItem,
+  WiFiRoomSurvey,
 } from "./types/topology";
 
 const GRADE_COLORS: Record<HealthGrade, { bg: string; text: string; border: string }> = {
@@ -25,6 +29,16 @@ const GRADE_COLORS: Record<HealthGrade, { bg: string; text: string; border: stri
   CRITICAL: { bg: "#7f1d1d", text: "#fca5a5", border: "#dc2626" },
 };
 
+const BSSID_CLASS_COLORS: Record<
+  BssidClassification,
+  { bg: string; text: string; border: string }
+> = {
+  OWN_MANAGED_AP: { bg: "#064e3b", text: "#6ee7b7", border: "#10b981" },
+  SONOSNET_MESH: { bg: "#1e3a8a", text: "#93c5fd", border: "#3b82f6" },
+  ROGUE_OWN_RADIO: { bg: "#7f1d1d", text: "#fca5a5", border: "#ef4444" },
+  NEIGHBOR_WIFI: { bg: "#334155", text: "#cbd5e1", border: "#64748b" },
+};
+
 export default function App() {
   const [overview, setOverview] = useState<HouseOverview | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -32,7 +46,19 @@ export default function App() {
   const [includeArchived, setIncludeArchived] = useState<boolean>(false);
   const [crudOpen, setCrudOpen] = useState<boolean>(false);
   const [selectedRoom, setSelectedRoom] = useState<RoomMatrixItem | null>(null);
+  const [roomSurveys, setRoomSurveys] = useState<WiFiRoomSurvey[]>([]);
   const [actionBanner, setActionBanner] = useState<string | null>(null);
+
+  // Room Survey Form State
+  const [surveyLabel, setSurveyLabel] = useState<string>("");
+  const [surveyApName, setSurveyApName] = useState<string>("Galerie EAP650");
+  const [surveyLinkSpeed, setSurveyLinkSpeed] = useState<number>(1201);
+  const [surveyBssid, setSurveyBssid] = useState<string>("76:4C:BC:76:7C:41");
+  const [surveySsid, setSurveySsid] = useState<string>("WuTangLan-Family");
+  const [surveyBand, setSurveyBand] = useState<"2.4GHz" | "5GHz">("5GHz");
+  const [surveyChannel, setSurveyChannel] = useState<number>(44);
+  const [surveyWidth, setSurveyWidth] = useState<number>(80);
+  const [surveyRssi, setSurveyRssi] = useState<number>(-49);
 
   // Room Form State
   const [roomName, setRoomName] = useState<string>("");
@@ -77,6 +103,40 @@ export default function App() {
   useEffect(() => {
     void loadData(includeArchived);
   }, [includeArchived]);
+
+  const handleOpenRoomSurveys = async (room: RoomMatrixItem) => {
+    setSelectedRoom(room);
+    try {
+      const surveys = await fetchRoomSurveys(room.slug);
+      setRoomSurveys(Array.isArray(surveys) ? surveys : []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load room Wi-Fi surveys");
+    }
+  };
+
+  const handleCreateRoomSurvey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedRoom) return;
+    const labelToUse = surveyLabel.trim() || "Manual Room Survey";
+    await createRoomSurvey(selectedRoom.slug, {
+      label: labelToUse,
+      link_speed_mbps: Number(surveyLinkSpeed) || undefined,
+      readings: [
+        {
+          bssid: surveyBssid,
+          ssid: surveySsid,
+          band: surveyBand,
+          channel: Number(surveyChannel),
+          width_mhz: Number(surveyWidth),
+          rssi_dbm: Number(surveyRssi),
+        },
+      ],
+    });
+    setSurveyLabel("");
+    const updatedSurveys = await fetchRoomSurveys(selectedRoom.slug);
+    setRoomSurveys(Array.isArray(updatedSurveys) ? updatedSurveys : []);
+    await loadData(includeArchived);
+  };
 
   const handlePollSonosNow = async () => {
     try {
@@ -730,10 +790,13 @@ export default function App() {
               {floor.rooms.map((room) => {
                 const gradeStyle =
                   GRADE_COLORS[room.health_grade] ?? GRADE_COLORS.GOOD;
+                const wifiGradeStyle =
+                  GRADE_COLORS[room.wifi_health_grade ?? room.health_grade] ??
+                  GRADE_COLORS.GOOD;
                 return (
                   <article
                     key={room.id}
-                    onClick={() => setSelectedRoom(room)}
+                    onClick={() => void handleOpenRoomSurveys(room)}
                     style={{
                       backgroundColor: "#0f172a",
                       border: `1px solid ${gradeStyle.border}`,
@@ -772,7 +835,7 @@ export default function App() {
                         gap: "10px",
                         fontSize: "0.78rem",
                         color: "#94a3b8",
-                        marginBottom: "10px",
+                        marginBottom: "6px",
                         flexWrap: "wrap",
                       }}
                     >
@@ -795,6 +858,66 @@ export default function App() {
                       <span>
                         ({room.pos_x}, {room.pos_y})
                       </span>
+                    </div>
+
+                    {/* T3 Room Wi-Fi Coverage Summary Row */}
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: "8px",
+                        flexWrap: "wrap",
+                        backgroundColor: "#1e293b",
+                        padding: "6px 10px",
+                        borderRadius: "6px",
+                        marginBottom: "10px",
+                        fontSize: "0.75rem",
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={{ color: "#38bdf8", fontWeight: 600 }}>
+                          {room.best_ap_name ?? "Galerie EAP650"}
+                        </span>
+                        {room.link_speed_mbps != null && (
+                          <span style={{ color: "#cbd5e1" }}>
+                            {`${room.link_speed_mbps} Mbps`}
+                          </span>
+                        )}
+                        {room.wifi_health_grade && (
+                          <span
+                            style={{
+                              backgroundColor: wifiGradeStyle.bg,
+                              color: wifiGradeStyle.text,
+                              padding: "1px 6px",
+                              borderRadius: "999px",
+                              fontSize: "0.68rem",
+                              fontWeight: 700,
+                            }}
+                          >
+                            Wi-Fi {room.wifi_health_grade}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleOpenRoomSurveys(room);
+                        }}
+                        style={{
+                          backgroundColor: "#0284c7",
+                          color: "#ffffff",
+                          border: "none",
+                          borderRadius: "4px",
+                          padding: "3px 8px",
+                          fontSize: "0.7rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Inspect Room Wi-Fi
+                      </button>
                     </div>
 
                     {/* SwitchPorts in Room */}
@@ -965,19 +1088,22 @@ export default function App() {
         ))}
       </main>
 
-      {/* Selected Room Quick Drawer */}
+      {/* Selected Room Wi-Fi Spectrum & Survey Drawer */}
       {selectedRoom && (
         <aside
+          aria-label="Room Wi-Fi Spectrum and Survey Drawer"
           style={{
             marginTop: "24px",
             backgroundColor: "#1e293b",
             border: "1px solid #38bdf8",
             borderRadius: "10px",
-            padding: "16px",
+            padding: "20px",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <h3 style={{ margin: 0 }}>Room Deep-Dive: {selectedRoom.name}</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>
+              Room Wi-Fi Spectrum &amp; Survey Drawer: {selectedRoom.name}
+            </h3>
             <button
               type="button"
               onClick={() => setSelectedRoom(null)}
@@ -991,9 +1117,308 @@ export default function App() {
               Close
             </button>
           </div>
-          <p style={{ color: "#cbd5e1", fontSize: "0.85rem" }}>
+          <p style={{ color: "#cbd5e1", fontSize: "0.85rem", marginBottom: "16px" }}>
             {selectedRoom.description}
           </p>
+
+          {/* Historical & Post-Remediation Surveys with BSSID Spectrum Tables */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginBottom: "20px" }}>
+            {roomSurveys.map((survey) => (
+              <div
+                key={survey.id ?? survey.survey_slug}
+                style={{
+                  backgroundColor: "#0f172a",
+                  border: "1px solid #334155",
+                  borderRadius: "8px",
+                  padding: "12px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "8px",
+                    flexWrap: "wrap",
+                    gap: "8px",
+                  }}
+                >
+                  <div>
+                    <strong style={{ color: "#38bdf8" }}>{survey.label}</strong>
+                    <span style={{ color: "#94a3b8", fontSize: "0.8rem", marginLeft: "10px" }}>
+                      AP: {survey.best_ap_name ?? "N/A"} ·{" "}
+                      {survey.link_speed_mbps != null ? `${survey.link_speed_mbps} Mbps` : "N/A"} ·
+                      5 GHz: {survey.best_5ghz_dbm ?? "N/A"} dBm · 2.4 GHz:{" "}
+                      {survey.best_24ghz_dbm ?? "N/A"} dBm
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      backgroundColor: (
+                        GRADE_COLORS[survey.wifi_health_grade] ?? GRADE_COLORS.GOOD
+                      ).bg,
+                      color: (GRADE_COLORS[survey.wifi_health_grade] ?? GRADE_COLORS.GOOD).text,
+                      padding: "2px 8px",
+                      borderRadius: "999px",
+                      fontSize: "0.72rem",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {survey.wifi_health_grade}
+                  </span>
+                </div>
+
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: "0.8rem",
+                    textAlign: "left",
+                  }}
+                >
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #334155", color: "#94a3b8" }}>
+                      <th style={{ padding: "6px" }}>SSID</th>
+                      <th style={{ padding: "6px" }}>BSSID</th>
+                      <th style={{ padding: "6px" }}>Band</th>
+                      <th style={{ padding: "6px" }}>Channel (Width)</th>
+                      <th style={{ padding: "6px" }}>RSSI</th>
+                      <th style={{ padding: "6px" }}>Classification</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(survey.readings ?? []).map((b, idx) => {
+                      const clsStyle =
+                        BSSID_CLASS_COLORS[b.classification] ?? BSSID_CLASS_COLORS.NEIGHBOR_WIFI;
+                      return (
+                        <tr
+                          key={b.id ?? `${b.bssid}-${idx}`}
+                          style={{ borderBottom: "1px solid #1e293b" }}
+                        >
+                          <td style={{ padding: "6px", fontWeight: 600 }}>{b.ssid}</td>
+                          <td style={{ padding: "6px", fontFamily: "monospace" }}>{b.bssid}</td>
+                          <td style={{ padding: "6px" }}>{b.band}</td>
+                          <td style={{ padding: "6px" }}>
+                            Ch {b.channel} ({b.width_mhz} MHz)
+                          </td>
+                          <td style={{ padding: "6px", fontWeight: 700 }}>{b.rssi_dbm} dBm</td>
+                          <td style={{ padding: "6px" }}>
+                            <span
+                              style={{
+                                backgroundColor: clsStyle.bg,
+                                color: clsStyle.text,
+                                border: `1px solid ${clsStyle.border}`,
+                                padding: "2px 8px",
+                                borderRadius: "999px",
+                                fontSize: "0.7rem",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {b.classification}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+
+          {/* Record New WiFiRoomSurvey Form */}
+          <form
+            onSubmit={handleCreateRoomSurvey}
+            style={{
+              backgroundColor: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: "8px",
+              padding: "14px",
+            }}
+          >
+            <h4 style={{ marginTop: 0, marginBottom: "10px", color: "#38bdf8" }}>
+              Record Room Wi-Fi Survey
+            </h4>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                gap: "10px",
+                marginBottom: "12px",
+              }}
+            >
+              <label style={{ fontSize: "0.78rem" }}>
+                Survey Label
+                <input
+                  type="text"
+                  value={surveyLabel}
+                  onChange={(e) => setSurveyLabel(e.target.value)}
+                  placeholder="e.g. Walkthrough Check"
+                  style={{
+                    width: "100%",
+                    padding: "6px",
+                    marginTop: "4px",
+                    background: "#1e293b",
+                    color: "#f8fafc",
+                    border: "1px solid #475569",
+                    borderRadius: "4px",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: "0.78rem" }}>
+                Covering AP
+                <input
+                  type="text"
+                  value={surveyApName}
+                  onChange={(e) => setSurveyApName(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "6px",
+                    marginTop: "4px",
+                    background: "#1e293b",
+                    color: "#f8fafc",
+                    border: "1px solid #475569",
+                    borderRadius: "4px",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: "0.78rem" }}>
+                Link Speed (Mbps)
+                <input
+                  type="number"
+                  value={surveyLinkSpeed}
+                  onChange={(e) => setSurveyLinkSpeed(Number(e.target.value))}
+                  style={{
+                    width: "100%",
+                    padding: "6px",
+                    marginTop: "4px",
+                    background: "#1e293b",
+                    color: "#f8fafc",
+                    border: "1px solid #475569",
+                    borderRadius: "4px",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: "0.78rem" }}>
+                BSSID
+                <input
+                  type="text"
+                  value={surveyBssid}
+                  onChange={(e) => setSurveyBssid(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "6px",
+                    marginTop: "4px",
+                    background: "#1e293b",
+                    color: "#f8fafc",
+                    border: "1px solid #475569",
+                    borderRadius: "4px",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: "0.78rem" }}>
+                SSID
+                <input
+                  type="text"
+                  value={surveySsid}
+                  onChange={(e) => setSurveySsid(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "6px",
+                    marginTop: "4px",
+                    background: "#1e293b",
+                    color: "#f8fafc",
+                    border: "1px solid #475569",
+                    borderRadius: "4px",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: "0.78rem" }}>
+                Band
+                <select
+                  value={surveyBand}
+                  onChange={(e) => setSurveyBand(e.target.value as "2.4GHz" | "5GHz")}
+                  style={{
+                    width: "100%",
+                    padding: "6px",
+                    marginTop: "4px",
+                    background: "#1e293b",
+                    color: "#f8fafc",
+                    border: "1px solid #475569",
+                    borderRadius: "4px",
+                  }}
+                >
+                  <option value="5GHz">5GHz</option>
+                  <option value="2.4GHz">2.4GHz</option>
+                </select>
+              </label>
+              <label style={{ fontSize: "0.78rem" }}>
+                Channel
+                <input
+                  type="number"
+                  value={surveyChannel}
+                  onChange={(e) => setSurveyChannel(Number(e.target.value))}
+                  style={{
+                    width: "100%",
+                    padding: "6px",
+                    marginTop: "4px",
+                    background: "#1e293b",
+                    color: "#f8fafc",
+                    border: "1px solid #475569",
+                    borderRadius: "4px",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: "0.78rem" }}>
+                Width (MHz)
+                <input
+                  type="number"
+                  value={surveyWidth}
+                  onChange={(e) => setSurveyWidth(Number(e.target.value))}
+                  style={{
+                    width: "100%",
+                    padding: "6px",
+                    marginTop: "4px",
+                    background: "#1e293b",
+                    color: "#f8fafc",
+                    border: "1px solid #475569",
+                    borderRadius: "4px",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: "0.78rem" }}>
+                RSSI (dBm)
+                <input
+                  type="number"
+                  value={surveyRssi}
+                  onChange={(e) => setSurveyRssi(Number(e.target.value))}
+                  style={{
+                    width: "100%",
+                    padding: "6px",
+                    marginTop: "4px",
+                    background: "#1e293b",
+                    color: "#f8fafc",
+                    border: "1px solid #475569",
+                    borderRadius: "4px",
+                  }}
+                />
+              </label>
+            </div>
+            <button
+              type="submit"
+              style={{
+                backgroundColor: "#059669",
+                color: "#fff",
+                border: "none",
+                borderRadius: "4px",
+                padding: "8px 14px",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Record Room Wi-Fi Survey
+            </button>
+          </form>
         </aside>
       )}
     </div>
