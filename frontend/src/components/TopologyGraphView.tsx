@@ -710,7 +710,7 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                           title={`Connected across floors to ${otherNode?.name ?? "other node"}`}
                         >
                           <div style={{ fontWeight: 700, color: "#a5b4fc" }}>
-                            {isOutgoing ? "▲ Uplink:" : "▼ Downlink:"} {otherNode?.name ?? "Node"} ({otherNode?.floor_name ?? "Floor"})
+                            {isOutgoing ? "▼ Downlink:" : "▲ Uplink:"} {otherNode?.name ?? "Node"} ({otherNode?.floor_name ?? "Floor"})
                           </div>
                           <div style={{ color: "#e0e7ff", fontSize: "0.62rem" }}>
                             {edge.label}

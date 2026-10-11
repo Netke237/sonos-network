@@ -51,21 +51,17 @@ describe("LiveWaveformOscilloscope Component (T8)", () => {
     {
       rincon_uuid: "RINCON_542A1B63FE6E01400",
       zone_name: "Wohnzimmer_Bookshelf",
-      room_slug: "wohnzimmer",
       ofdm_ani_level: 3,
       noise_floor_dbm: -105,
       phy_error_rate: 0.0,
-      ping_rtt_ms: 1.2,
       captured_at: new Date().toISOString(),
     },
     {
       rincon_uuid: "RINCON_542A1B63E23401400",
       zone_name: "Wohnzimmer_Buchregal",
-      room_slug: "wohnzimmer",
       ofdm_ani_level: 8,
       noise_floor_dbm: -92,
       phy_error_rate: 168.4,
-      ping_rtt_ms: 14.5,
       captured_at: new Date().toISOString(),
     },
   ];

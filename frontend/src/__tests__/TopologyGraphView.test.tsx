@@ -465,5 +465,7 @@ describe("T4 Interactive Dual Network Topology Graph View", () => {
     expect(
       screen.queryByTestId("topology-node-sonos-wohnzimmer-bookshelf")
     ).not.toBeInTheDocument();
+    // Cross-floor connection renders as explicit Uplink Anchor Badge instead of off-canvas line
+    expect(screen.getByText(/▲ Uplink: Galerie EAP650 \(Obergeschoss\)/i)).toBeInTheDocument();
   });
 });
