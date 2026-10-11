@@ -1081,13 +1081,16 @@ class SqlAlchemyTopologyRepository:
                     update={"connection_mode": d.connection_mode}
                 )
             else:
+                conn_mode = ConnectionMode.SONOSNET_MODE
+                if d.connection_mode and d.connection_mode in ConnectionMode._value2member_map_:
+                    conn_mode = ConnectionMode(d.connection_mode)
                 p_dto = PlayerTelemetryDto(
                     rincon_uuid=d.rincon_uuid or d.slug,
                     zone_name=d.name,
                     ip_address=d.ip_address,
-                    base_mac=d.mac_address,
-                    bssid=d.bssid,
-                    connection_mode=d.connection_mode,
+                    base_mac=d.base_mac,
+                    sonosnet_bssid=d.sonosnet_bssid,
+                    connection_mode=conn_mode,
                 )
             players_by_room.setdefault(d.room_id, []).append(p_dto)
 
@@ -1186,13 +1189,16 @@ class SqlAlchemyTopologyRepository:
                         update={"connection_mode": d.connection_mode}
                     )
                 else:
+                    conn_mode = ConnectionMode.SONOSNET_MODE
+                    if d.connection_mode and d.connection_mode in ConnectionMode._value2member_map_:
+                        conn_mode = ConnectionMode(d.connection_mode)
                     p_dto = PlayerTelemetryDto(
                         rincon_uuid=d.rincon_uuid or d.slug,
                         zone_name=d.name,
                         ip_address=d.ip_address,
-                        base_mac=d.mac_address,
-                        bssid=d.bssid,
-                        connection_mode=d.connection_mode,
+                        base_mac=d.base_mac,
+                        sonosnet_bssid=d.sonosnet_bssid,
+                        connection_mode=conn_mode,
                     )
                 players_by_room.setdefault(d.room_id, []).append(p_dto)
 

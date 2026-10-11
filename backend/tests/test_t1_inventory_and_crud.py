@@ -279,3 +279,30 @@ async def test_live_postgres_seed_verification():
             assert len(rooms) >= 11
             sonos_players = [d for d in devices if d["device_role"] == "SONOS_PLAYER"]
             assert len(sonos_players) >= 14
+
+
+@pytest.mark.asyncio
+async def test_overview_and_diagnostics_with_unprofiled_player(client: AsyncClient):
+    # Regression test for GATE-01: verify adding a player with no prior telemetry snapshot does not crash overview or diagnostics
+    rooms_resp = await client.get("/api/rooms")
+    room_id = rooms_resp.json()[0]["id"]
+    create_payload = {
+        "slug": "test-unprofiled-sonos-speaker",
+        "name": "Test Unprofiled Sonos",
+        "device_role": "SONOS_PLAYER",
+        "model_name": "One SL",
+        "ip_address": "192.168.10.99",
+        "base_mac": "94:9f:3e:aa:bb:cc",
+        "sonosnet_bssid": "94:9f:3e:aa:bb:cd",
+        "rincon_uuid": "RINCON_949F3EAABBCC01400",
+        "connection_mode": "SONOSNET_MODE",
+        "room_id": room_id,
+    }
+    dev_resp = await client.post("/api/devices", json=create_payload)
+    assert dev_resp.status_code == 201
+
+    overview_resp = await client.get("/api/overview")
+    assert overview_resp.status_code == 200
+
+    diag_resp = await client.get("/api/diagnostics")
+    assert diag_resp.status_code == 200
