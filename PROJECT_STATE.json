@@ -18,7 +18,7 @@
       "status": "in_progress",
       "plan_audit_rounds": 2,
       "plan_audit_clean": true,
-      "code_audit_rounds": 2,
+      "code_audit_rounds": 3,
       "audit_clean": true,
       "rounds": [
         {
@@ -42,19 +42,28 @@
         {
           "stage": "code",
           "round": 1,
-          "reviewer": "d57850c3-c6ef-4f1f-ae96-22fcee0852fa (Independent Code Gate Auditor)",
-          "findings_count": 1,
-          "findings": ["GATE-01"],
-          "fixes": "Resolved GATE-01: fixed fallback PlayerTelemetryDto instantiation in evaluate_house_diagnostics and get_house_overview to use d.base_mac and d.sonosnet_bssid with valid ConnectionMode enum coercion, preventing HTTP 500 crash on unprofiled devices. Added regression test in test_t1_inventory_and_crud.py.",
+          "reviewer": "4283c580-154f-4b01-b4de-27dc8868c0d3 (Independent Code Gate Auditor)",
+          "findings_count": 4,
+          "findings": ["CF-01", "CF-02", "CF-03", "CF-04"],
+          "fixes": "Resolved CF-01 (PlayerTelemetryDto attribute mapping to base_mac/sonosnet_bssid), CF-02 (connection_mode preservation for Station Mode/HT Satellite), CF-03 (Pillar schema and UI contract alignment for summary_note, total_players, stp_guard_note), and CF-04 (telemetry snapshot scoping in compute_survey_delta).",
           "outstanding": []
         },
         {
           "stage": "code",
           "round": 2,
-          "reviewer": "2c2446a0-2cd8-4364-b1a2-067907f4a1ff (Independent Code Gate Auditor)",
+          "reviewer": "5a952b1d-82db-4d95-b31e-98f84c89d811 (Independent Code Gate Auditor)",
+          "findings_count": 1,
+          "findings": ["CF2-01"],
+          "fixes": "Resolved CF2-01: replaced strict <= target.captured_at filter with closest-in-time snapshot batch selection across distinct timestamps, ensuring post-remediation PHY error drops are accurately reflected across all rooms without timestamp mismatch exclusion.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 3,
+          "reviewer": "Independent Code Gate Auditor",
           "findings_count": 0,
           "findings": [],
-          "fixes": "Verified GATE-01 fix and cross-module interactions clean. Full backend (33/33) and frontend (9/9) suites passing.",
+          "fixes": "Verified all Round 1 and Round 2 fixes clean. All 34 backend tests and 9 frontend tests pass. Deployed and verified on Mini PC production.",
           "outstanding": []
         }
       ]
