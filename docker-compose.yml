@@ -1,0 +1,53 @@
+services:
+  sonos-network-db:
+    image: postgres:15-alpine
+    container_name: sonos-network-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sonos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sonos_network_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-sonos_network}
+    ports:
+      - "5434:5432"
+    volumes:
+      - sonos_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sonos} -d ${POSTGRES_DB:-sonos_network}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  sonos-network-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sonos-network-backend
+    restart: unless-stopped
+    depends_on:
+      sonos-network-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://sonos:sonos_network_pw@sonos-network-db:5432/sonos_network}
+      OMADA_CONTROLLER_URL: ${OMADA_CONTROLLER_URL:-https://host.docker.internal:8043}
+      OMADA_SITE_NAME: ${OMADA_SITE_NAME:-NeubibergerStr61}
+      BACKGROUND_POLL_INTERVAL_SEC: ${BACKGROUND_POLL_INTERVAL_SEC:-60}
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  sonos-network-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sonos-network-frontend
+    restart: unless-stopped
+    depends_on:
+      - sonos-network-backend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://192.168.55.60:8000}
+    ports:
+      - "3000:3000"
+
+volumes:
+  sonos_pgdata:
