@@ -1778,7 +1778,9 @@ export default function App() {
                         fontStyle: "italic",
                       }}
                     >
-                      {roomDiagnostics.wifi_pillar.summary_note}
+                      {roomDiagnostics.wifi_pillar.summary_note ||
+                        roomDiagnostics.wifi_pillar.channel_summary ||
+                        ""}
                     </div>
                   </div>
                 </div>
@@ -1826,7 +1828,9 @@ export default function App() {
                     <div>
                       Players:{" "}
                       <strong>
-                        {roomDiagnostics.sonos_pillar.total_players}
+                        {roomDiagnostics.sonos_pillar.total_players ??
+                          roomDiagnostics.sonos_pillar.player_count ??
+                          0}
                       </strong>
                     </div>
                     <div>
@@ -1835,15 +1839,17 @@ export default function App() {
                         {roomDiagnostics.sonos_pillar.designated_stp_root}
                       </strong>
                     </div>
-                    <div
-                      style={{
-                        marginTop: "4px",
-                        color: "#94a3b8",
-                        fontStyle: "italic",
-                      }}
-                    >
-                      {roomDiagnostics.sonos_pillar.summary_note}
-                    </div>
+                    {roomDiagnostics.sonos_pillar.summary_note && (
+                      <div
+                        style={{
+                          marginTop: "4px",
+                          color: "#94a3b8",
+                          fontStyle: "italic",
+                        }}
+                      >
+                        {roomDiagnostics.sonos_pillar.summary_note}
+                      </div>
+                    )}
                     {roomDiagnostics.sonos_pillar.players.map((p) => (
                       <div
                         key={p.rincon_uuid}
@@ -1926,7 +1932,8 @@ export default function App() {
                         </strong>
                       </div>
                     )}
-                    {roomDiagnostics.wired_pillar.stp_guard_note && (
+                    {(roomDiagnostics.wired_pillar.stp_guard_note ||
+                      roomDiagnostics.wired_pillar.stp_root_guard_note) && (
                       <div
                         style={{
                           marginTop: "6px",
@@ -1938,7 +1945,8 @@ export default function App() {
                           fontSize: "0.75rem",
                         }}
                       >
-                        {roomDiagnostics.wired_pillar.stp_guard_note}
+                        {roomDiagnostics.wired_pillar.stp_guard_note ||
+                          roomDiagnostics.wired_pillar.stp_root_guard_note}
                       </div>
                     )}
                   </div>

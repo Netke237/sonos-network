@@ -565,6 +565,7 @@ class WiFiPillarSummarySchema(BaseModel):
     connected_ssid: str | None = None
     link_speed_mbps: int | None = None
     channel_summary: str = ""
+    summary_note: str = ""
     rogue_count: int = 0
     rogue_ssids: list[str] = []
     neighbor_count: int = 0
@@ -597,6 +598,7 @@ class PlayerDiagnosticItemSchema(BaseModel):
 class SonosPillarSummarySchema(BaseModel):
     health_grade: str
     player_count: int = 0
+    total_players: int = 0
     reachable_count: int = 0
     designated_stp_root: str
     is_stp_root_healthy: bool = True
@@ -604,6 +606,7 @@ class SonosPillarSummarySchema(BaseModel):
     max_phy_error_rate: float | None = None
     max_stp_path_cost: int | None = None
     has_ghost_group: bool = False
+    summary_note: str = ""
     players: list[PlayerDiagnosticItemSchema] = []
 
 
@@ -615,6 +618,7 @@ class WiredPillarSummarySchema(BaseModel):
     vlan_summary: str = ""
     stp_root_guard_required: bool = False
     stp_root_guard_note: str = ""
+    stp_guard_note: str = ""
 
 
 class RoomDiagnosticSummarySchema(BaseModel):

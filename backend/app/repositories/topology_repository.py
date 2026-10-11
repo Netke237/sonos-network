@@ -834,12 +834,52 @@ class SqlAlchemyTopologyRepository:
         b_grade_val = grade_ranks.get(baseline.wifi_health_grade, 0)
         wifi_improved = (d_5g is not None and d_5g > 0) or (t_grade_val > b_grade_val)
 
-        base_sonos_res = await self._session.execute(
-            select(SonosTelemetrySnapshot)
-            .where(SonosTelemetrySnapshot.room_id == room.id)
-            .order_by(SonosTelemetrySnapshot.captured_at.asc())
+        dev_res = await self._session.execute(
+            select(NetworkDevice).where(
+                NetworkDevice.room_id == room.id,
+                NetworkDevice.device_role == DeviceRole.SONOS_PLAYER.value,
+            )
         )
-        base_sonos = list(base_sonos_res.scalars().all())
+        room_devs = list(dev_res.scalars().all())
+        num_devs = len(room_devs) or 1
+
+        first_snaps_res = await self._session.execute(
+            select(SonosTelemetrySnapshot)
+            .where(
+                SonosTelemetrySnapshot.room_id == room.id,
+                SonosTelemetrySnapshot.captured_at <= baseline.captured_at,
+            )
+            .order_by(SonosTelemetrySnapshot.captured_at.desc())
+            .limit(num_devs)
+        )
+        first_snaps = list(first_snaps_res.scalars().all())
+        if not first_snaps:
+            first_fallback_res = await self._session.execute(
+                select(SonosTelemetrySnapshot)
+                .where(SonosTelemetrySnapshot.room_id == room.id)
+                .order_by(SonosTelemetrySnapshot.captured_at.asc())
+                .limit(num_devs)
+            )
+            first_snaps = list(first_fallback_res.scalars().all())
+
+        last_snaps_res = await self._session.execute(
+            select(SonosTelemetrySnapshot)
+            .where(
+                SonosTelemetrySnapshot.room_id == room.id,
+                SonosTelemetrySnapshot.captured_at <= target.captured_at,
+            )
+            .order_by(SonosTelemetrySnapshot.captured_at.desc())
+            .limit(num_devs)
+        )
+        last_snaps = list(last_snaps_res.scalars().all())
+        if not last_snaps:
+            last_fallback_res = await self._session.execute(
+                select(SonosTelemetrySnapshot)
+                .where(SonosTelemetrySnapshot.room_id == room.id)
+                .order_by(SonosTelemetrySnapshot.captured_at.desc())
+                .limit(num_devs)
+            )
+            last_snaps = list(last_fallback_res.scalars().all())
 
         base_ani = None
         target_ani = None
@@ -849,19 +889,7 @@ class SqlAlchemyTopologyRepository:
         target_cost = None
         base_ping = None
         target_ping = None
-
-        if base_sonos:
-            dev_res = await self._session.execute(
-                select(NetworkDevice).where(
-                    NetworkDevice.room_id == room.id,
-                    NetworkDevice.device_role == DeviceRole.SONOS_PLAYER,
-                )
-            )
-            room_devs = list(dev_res.scalars().all())
-            num_devs = len(room_devs) or 1
-            first_snaps = base_sonos[:num_devs]
-            last_snaps = base_sonos[-num_devs:]
-
+        if first_snaps or last_snaps:
             valid_first_ani = [s.ofdm_ani_level for s in first_snaps if s.ofdm_ani_level is not None]
             if valid_first_ani:
                 base_ani = max(valid_first_ani)
@@ -1077,8 +1105,13 @@ class SqlAlchemyTopologyRepository:
             if d.device_role != DeviceRole.SONOS_PLAYER.value or not d.room_id:
                 continue
             if d.rincon_uuid and d.rincon_uuid in telem_by_uuid:
-                p_dto = telem_by_uuid[d.rincon_uuid].model_copy(
-                    update={"connection_mode": d.connection_mode}
+                update_kwargs: dict[str, Any] = {}
+                if d.connection_mode is not None:
+                    update_kwargs["connection_mode"] = d.connection_mode
+                p_dto = (
+                    telem_by_uuid[d.rincon_uuid].model_copy(update=update_kwargs)
+                    if update_kwargs
+                    else telem_by_uuid[d.rincon_uuid]
                 )
             else:
                 conn_mode = ConnectionMode.SONOSNET_MODE
@@ -1185,8 +1218,13 @@ class SqlAlchemyTopologyRepository:
 
             if d.device_role == DeviceRole.SONOS_PLAYER.value and d.room_id:
                 if d.rincon_uuid and d.rincon_uuid in telem_by_uuid:
-                    p_dto = telem_by_uuid[d.rincon_uuid].model_copy(
-                        update={"connection_mode": d.connection_mode}
+                    update_kwargs: dict[str, Any] = {}
+                    if d.connection_mode is not None:
+                        update_kwargs["connection_mode"] = d.connection_mode
+                    p_dto = (
+                        telem_by_uuid[d.rincon_uuid].model_copy(update=update_kwargs)
+                        if update_kwargs
+                        else telem_by_uuid[d.rincon_uuid]
                     )
                 else:
                     conn_mode = ConnectionMode.SONOSNET_MODE

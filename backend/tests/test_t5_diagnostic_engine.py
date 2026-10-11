@@ -539,3 +539,55 @@ async def test_live_postgres_diagnostics_verification():
             sweep = await client.post("/api/actions/ping-sweep")
             assert sweep.status_code == 200
             assert sweep.json()["total_probed"] >= 14
+
+
+@pytest.mark.asyncio
+async def test_code_audit_gate_fixes_cf01_cf02_cf03():
+    """Verify CF-01, CF-02, and CF-03 fixes: unpolled player fallback, connection_mode preservation, and pillar DTO contracts."""
+    app = create_app(
+        database_url="sqlite+aiosqlite:///:memory:",
+        sonos_adapter=FakeSonosAdapter(),
+        probe_adapter=FakeNetworkProbeAdapter(),
+    )
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            # Check Nicolas diagnostics has pillar summary notes, total_players, and stp_guard_note
+            res = await client.get("/api/rooms/nicolas/diagnostics")
+            assert res.status_code == 200
+            data = res.json()
+            wp = data["wifi_pillar"]
+            sp = data["sonos_pillar"]
+            wired = data["wired_pillar"]
+
+            assert "summary_note" in wp
+            assert wp["summary_note"] == wp["channel_summary"]
+            assert "total_players" in sp
+            assert sp["total_players"] == sp["player_count"]
+            assert "summary_note" in sp
+            assert "stp_guard_note" in wired
+            assert wired["stp_guard_note"] == wired["stp_root_guard_note"]
+            assert wired["stp_root_guard_required"] is True
+            assert "F-03 STP Root Preservation Guard" in wired["stp_guard_note"]
+
+            # CF-01 & CF-02: Add an unpolled player with connection_mode=None to test fallback mapping without AttributeError
+            rooms_res = await client.get("/api/rooms")
+            keller_room = next(r for r in rooms_res.json() if r["slug"] == "keller")
+            dev_create = {
+                "name": "Keller_Test_Unpolled",
+                "slug": "keller-test-unpolled",
+                "device_role": "SONOS_PLAYER",
+                "model_name": "One SL",
+                "ip_address": "192.168.10.222",
+                "base_mac": "34:7E:5C:99:99:99",
+                "sonosnet_bssid": "34:7E:5C:99:99:9A",
+                "rincon_uuid": "RINCON_347E5C99999901400",
+                "connection_mode": None,
+                "room_id": keller_room["id"],
+            }
+            create_res = await client.post("/api/devices", json=dev_create)
+            assert create_res.status_code == 201
+
+            # Overview must succeed without AttributeError ('mac_address' or 'bssid')
+            ov_res = await client.get("/api/overview")
+            assert ov_res.status_code == 200

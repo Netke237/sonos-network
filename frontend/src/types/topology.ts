@@ -316,11 +316,12 @@ export interface WiFiPillarSummary {
   covering_ap_name?: string | null;
   covering_ap_slug?: string | null;
   link_speed_mbps?: number | null;
+  channel_summary?: string;
+  summary_note?: string;
   rogue_count: number;
   neighbor_count: number;
   co_channel_neighbors: string[];
   has_channel_6_high_power_wifi: boolean;
-  summary_note: string;
 }
 
 export interface PlayerDiagnosticItem {
@@ -345,28 +346,30 @@ export interface PlayerDiagnosticItem {
 
 export interface SonosPillarSummary {
   health_grade: HealthGrade;
-  total_players: number;
-  sonosnet_player_count: number;
-  station_mode_player_count: number;
-  ht_satellite_player_count: number;
-  wired_player_count: number;
+  player_count?: number;
+  total_players?: number;
+  sonosnet_player_count?: number;
+  station_mode_player_count?: number;
+  ht_satellite_player_count?: number;
+  wired_player_count?: number;
   designated_stp_root: string;
   is_stp_root_healthy: boolean;
-  max_phy_error_rate: number;
-  max_stp_path_cost: number;
-  ghost_group_zones: string[];
+  max_phy_error_rate?: number | null;
+  max_stp_path_cost?: number | null;
+  ghost_group_zones?: string[];
   players: PlayerDiagnosticItem[];
-  summary_note: string;
+  summary_note?: string;
 }
 
 export interface WiredPillarSummary {
   health_grade: HealthGrade;
   has_vlan10_wall_jack: boolean;
   port_numbers: number[];
-  pvid_list: number[];
-  bpdu_policy: string;
+  pvid_list?: number[];
+  bpdu_policy?: string;
   stp_root_guard_required: boolean;
-  stp_guard_note: string;
+  stp_root_guard_note?: string;
+  stp_guard_note?: string;
 }
 
 export interface RoomDiagnosticSummary {

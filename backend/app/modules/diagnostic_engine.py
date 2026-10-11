@@ -341,6 +341,7 @@ class DiagnosticEngine:
         elif best_24ghz_dbm is not None:
             ch_parts.append(f"2.4GHz @ {best_24ghz_dbm} dBm")
 
+        ch_summary = " · ".join(ch_parts) if ch_parts else "No BSSID scan readings"
         wifi_pillar = WiFiPillarSummarySchema(
             health_grade=wifi_pillar_grade,
             best_5ghz_dbm=best_5ghz_dbm,
@@ -352,7 +353,8 @@ class DiagnosticEngine:
             connected_bssid=survey.connected_bssid if survey else None,
             connected_ssid=survey.connected_ssid if survey else "WuTangLan-Family",
             link_speed_mbps=survey.link_speed_mbps if survey else 1201,
-            channel_summary=" · ".join(ch_parts) if ch_parts else "No BSSID scan readings",
+            channel_summary=ch_summary,
+            summary_note=ch_summary,
             rogue_count=rogue_count,
             rogue_ssids=rogue_ssids,
             neighbor_count=len(neighbor_readings)
@@ -418,6 +420,7 @@ class DiagnosticEngine:
             else "No dedicated switch wall jack patched",
             stp_root_guard_required=stp_guard_required,
             stp_root_guard_note=stp_guard_note,
+            stp_guard_note=stp_guard_note,
         )
 
         # =====================================================================
@@ -576,9 +579,18 @@ class DiagnosticEngine:
         else:
             sonos_pillar_grade = HealthGrade.EXCELLENT.value
 
+        sonos_modes_summary = (
+            ", ".join(
+                f"{p.zone_name} ({p.connection_mode.value if hasattr(p.connection_mode, 'value') else p.connection_mode})"
+                for p in players
+            )
+            if players
+            else "No Sonos players in room"
+        )
         sonos_pillar = SonosPillarSummarySchema(
             health_grade=sonos_pillar_grade,
             player_count=len(players),
+            total_players=len(players),
             reachable_count=sum(1 for p in players if p.is_reachable),
             designated_stp_root=room_designated_root,
             is_stp_root_healthy=room_root_healthy,
@@ -586,6 +598,7 @@ class DiagnosticEngine:
             max_phy_error_rate=max(phy_rates) if phy_rates else None,
             max_stp_path_cost=max(stp_costs) if stp_costs else None,
             has_ghost_group=room_has_ghost,
+            summary_note=sonos_modes_summary,
             players=player_items,
         )
 
