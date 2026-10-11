@@ -18,6 +18,8 @@ import {
   triggerDaemonCollect,
 } from "./api/topologyApi";
 import { TopologyGraphView } from "./components/TopologyGraphView";
+import { AniCleanlinessMeter } from "./components/AniCleanlinessMeter";
+import { LiveWaveformOscilloscope } from "./components/LiveWaveformOscilloscope";
 import type {
   BssidClassification,
   ConnectionMode,
@@ -1094,10 +1096,20 @@ export default function App() {
             </div>
           </div>
 
+          {/* Real-time Oscilloscope & Sequential EMI Procedure */}
+          <LiveWaveformOscilloscope
+            samples={liveRfSamples}
+            isConnected={liveRfConnected}
+            isPaused={liveRfPaused}
+            onTogglePause={() => setLiveRfPaused(!liveRfPaused)}
+            roomFilter={liveRfRoomFilter}
+            onRoomFilterChange={(r) => setLiveRfRoomFilter(r)}
+          />
+
           {/* EMI Isolation Guidance Box */}
           <div
             style={{
-              backgroundColor: "#312e81",
+              backgroundColor: "#1e1b4b",
               border: "1px solid #6366f1",
               borderRadius: "8px",
               padding: "12px 16px",
@@ -1165,29 +1177,7 @@ export default function App() {
                         Ch {s.ieee_channel ?? 6}
                       </td>
                       <td style={{ padding: "10px 8px" }}>
-                        <span
-                          style={{
-                            backgroundColor:
-                              (s.ofdm_ani_level ?? 0) >= 7
-                                ? "#7f1d1d"
-                                : (s.ofdm_ani_level ?? 0) >= 4
-                                ? "#713f12"
-                                : "#064e3b",
-                            color:
-                              (s.ofdm_ani_level ?? 0) >= 7
-                                ? "#fca5a5"
-                                : (s.ofdm_ani_level ?? 0) >= 4
-                                ? "#fde047"
-                                : "#6ee7b7",
-                            padding: "2px 8px",
-                            borderRadius: "999px",
-                            fontWeight: 700,
-                          }}
-                        >
-                          {s.ofdm_ani_level != null
-                            ? `ANI ${s.ofdm_ani_level}`
-                            : "ANI N/A"}
-                        </span>
+                        <AniCleanlinessMeter aniLevel={s.ofdm_ani_level} compact={true} />
                       </td>
                       <td style={{ padding: "10px 8px", color: "#cbd5e1" }}>
                         {s.noise_floor_dbm != null
@@ -1508,11 +1498,11 @@ export default function App() {
                                     flexWrap: "wrap",
                                   }}
                                 >
-                                  <span>
-                                    {dev.ofdm_ani_level != null
-                                      ? `ANI ${dev.ofdm_ani_level}`
-                                      : "ANI N/A"}
-                                  </span>
+                                  <AniCleanlinessMeter
+                                    aniLevel={dev.ofdm_ani_level}
+                                    compact={true}
+                                    showExplanation={false}
+                                  />
                                   <span>
                                     {dev.noise_floor_dbm != null
                                       ? `${dev.noise_floor_dbm} dBm`

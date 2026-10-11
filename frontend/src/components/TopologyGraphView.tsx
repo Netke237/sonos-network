@@ -9,6 +9,7 @@ import type {
   TopologyLayerFilter,
   TopologyNode,
 } from "../types/topology";
+import { AniCleanlinessMeter } from "./AniCleanlinessMeter";
 
 const GRADE_STYLES: Record<HealthGrade, { bg: string; text: string; border: string }> = {
   EXCELLENT: { bg: "#064e3b", text: "#6ee7b7", border: "#10b981" },
@@ -32,6 +33,20 @@ const LAYER_COLORS: Record<string, string> = {
   SONOS_MESH: "#10b981",
 };
 
+interface FloorZone {
+  slug: string;
+  name: string;
+  yMin: number;
+  yMax: number;
+}
+
+const FLOOR_ZONES: FloorZone[] = [
+  { slug: "dachgeschoss", name: "Dachgeschoss (Attic)", yMin: 20, yMax: 180 },
+  { slug: "obergeschoss", name: "Obergeschoss (Upper Floor)", yMin: 190, yMax: 380 },
+  { slug: "erdgeschoss", name: "Erdgeschoss (Ground Floor)", yMin: 390, yMax: 660 },
+  { slug: "keller", name: "Keller (Basement)", yMin: 670, yMax: 840 },
+];
+
 interface TopologyGraphViewProps {
   floors: FloorMatrixItem[];
   onInspectRoomSlug?: (roomSlug: string) => void;
@@ -49,6 +64,7 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
   const [showBlockedStp, setShowBlockedStp] = useState<boolean>(true);
   const [selectedFloorSlug, setSelectedFloorSlug] = useState<string>("ALL");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [showEdgeList, setShowEdgeList] = useState<boolean>(true);
 
   useEffect(() => {
     let active = true;
@@ -96,6 +112,17 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
     [visibleNodes]
   );
 
+  const nodesById = useMemo(() => {
+    const map = new Map<string, TopologyNode>();
+    if (graphData) {
+      for (const n of graphData.nodes) {
+        map.set(n.id, n);
+      }
+    }
+    return map;
+  }, [graphData]);
+
+  // Edges filtered by current active layer, STP blocking flag, and floor visibility
   const visibleEdges: DeviceConnectionEdge[] = useMemo(() => {
     if (!graphData) return [];
     return graphData.edges.filter((edge) => {
@@ -129,15 +156,28 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
     });
   }, [graphData, layerFilter, showBlockedStp, selectedFloorSlug, visibleNodeIdSet]);
 
-  const nodesById = useMemo(() => {
-    const map = new Map<string, TopologyNode>();
-    if (graphData) {
-      for (const n of graphData.nodes) {
-        map.set(n.id, n);
+  // Map of cross-floor links for each visible node (so we never draw lines into empty void!)
+  const crossFloorLinksByNode = useMemo(() => {
+    const map = new Map<string, { edge: DeviceConnectionEdge; isOutgoing: boolean }[]>();
+    if (selectedFloorSlug === "ALL" || !graphData) return map;
+
+    for (const edge of visibleEdges) {
+      const sourceVisible = visibleNodeIdSet.has(edge.source);
+      const targetVisible = visibleNodeIdSet.has(edge.target);
+
+      // Only cross-floor when one end is visible and the other is NOT visible
+      if (sourceVisible && !targetVisible) {
+        const list = map.get(edge.source) ?? [];
+        list.push({ edge, isOutgoing: true });
+        map.set(edge.source, list);
+      } else if (targetVisible && !sourceVisible) {
+        const list = map.get(edge.target) ?? [];
+        list.push({ edge, isOutgoing: false });
+        map.set(edge.target, list);
       }
     }
     return map;
-  }, [graphData]);
+  }, [selectedFloorSlug, graphData, visibleEdges, visibleNodeIdSet]);
 
   const selectedNode: TopologyNode | null = useMemo(() => {
     if (!selectedNodeId) return null;
@@ -150,6 +190,12 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
       (e) => e.source === selectedNode.id || e.target === selectedNode.id
     );
   }, [graphData, selectedNode]);
+
+  // Filter floor zones to show only the selected floor if filtered
+  const activeFloorZones = useMemo(() => {
+    if (selectedFloorSlug === "ALL") return FLOOR_ZONES;
+    return FLOOR_ZONES.filter((z) => z.slug.toLowerCase() === selectedFloorSlug.toLowerCase());
+  }, [selectedFloorSlug]);
 
   return (
     <section
@@ -278,29 +324,36 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
         </div>
       </div>
 
-      {/* Legend Strip */}
+      {/* Legend & Guidance Strip */}
       <div
         style={{
           display: "flex",
-          gap: "16px",
+          justifyContent: "space-between",
+          alignItems: "center",
           flexWrap: "wrap",
+          gap: "12px",
+          marginBottom: "14px",
           fontSize: "0.75rem",
           color: "#94a3b8",
-          marginBottom: "14px",
         }}
       >
-        <span>
-          <strong style={{ color: "#38bdf8" }}>━━</strong> WIRED_LAN (Trunk / VLAN 10)
-        </span>
-        <span>
-          <strong style={{ color: "#a855f7" }}>━━</strong> WIFI_INFRA (EAP650 Ch 44 / Ch 40)
-        </span>
-        <span>
-          <strong style={{ color: "#10b981" }}>━━</strong> SONOS_MESH Active Forwarding (STP 03/04 &amp; 5GHz HT Ch 48)
-        </span>
-        <span>
-          <strong style={{ color: "#64748b" }}>╌╌</strong> SONOS_MESH Blocked Backup Path (STP 00)
-        </span>
+        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+          <span>
+            <strong style={{ color: "#38bdf8" }}>━━</strong> WIRED_LAN (Trunk / VLAN 10)
+          </span>
+          <span>
+            <strong style={{ color: "#a855f7" }}>━━</strong> WIFI_INFRA (EAP650 Ch 44 / Ch 40)
+          </span>
+          <span>
+            <strong style={{ color: "#10b981" }}>━━</strong> SONOS_MESH Active Audio Tree (STP 03/04 &amp; 5GHz Ch 48)
+          </span>
+          <span>
+            <strong style={{ color: "#64748b" }}>╌╌</strong> SONOS_MESH Blocked Backup Path (STP 00)
+          </span>
+        </div>
+        <div style={{ color: "#cbd5e1" }}>
+          <span>Click any device card to spotlight connected mesh paths</span>
+        </div>
       </div>
 
       {loading && <p>Loading network topology graph...</p>}
@@ -315,11 +368,11 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
             alignItems: "start",
           }}
         >
-          {/* Interactive 2D SVG + Node Canvas */}
+          {/* Main Interactive Canvas Container */}
           <div
             style={{
               position: "relative",
-              minHeight: "820px",
+              minHeight: "860px",
               backgroundColor: "#0f172a",
               borderRadius: "10px",
               border: "1px solid #334155",
@@ -327,10 +380,10 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
               padding: "16px",
             }}
           >
-            {/* SVG Directed Edge Layer */}
+            {/* SVG Layer for Floor Zones, Grid Lines, and Directed Edges */}
             <svg
               width="1050"
-              height="800"
+              height="860"
               style={{
                 position: "absolute",
                 top: 0,
@@ -348,7 +401,29 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                   markerHeight="6"
                   orient="auto-start-reverse"
                 >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#10b981" />
+                </marker>
+                <marker
+                  id="arrow-wired"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto-start-reverse"
+                >
                   <path d="M 0 0 L 10 5 L 0 10 z" fill="#38bdf8" />
+                </marker>
+                <marker
+                  id="arrow-wifi"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#a855f7" />
                 </marker>
                 <marker
                   id="arrow-blocking"
@@ -361,27 +436,87 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                 >
                   <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
                 </marker>
+                <marker
+                  id="arrow-highlight"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#facc15" />
+                </marker>
               </defs>
 
+              {/* Physical Floor Zone Background Bands */}
+              {activeFloorZones.map((zone) => (
+                <g key={zone.slug}>
+                  <rect
+                    x="20"
+                    y={zone.yMin}
+                    width="1010"
+                    height={zone.yMax - zone.yMin}
+                    fill={zone.slug === "keller" || zone.slug === "obergeschoss" ? "#0b1329" : "#0d1b2a"}
+                    stroke="#1e293b"
+                    strokeWidth="1"
+                    rx="8"
+                  />
+                  <text
+                    x="35"
+                    y={zone.yMin + 22}
+                    fill="#64748b"
+                    fontSize="11"
+                    fontWeight="700"
+                    fontFamily="sans-serif"
+                    letterSpacing="1px"
+                  >
+                    {zone.name.toUpperCase()}
+                  </text>
+                </g>
+              ))}
+
+              {/* Draw Directed Edges — STRICT RULE: Only between two nodes visible on the canvas! */}
               {visibleEdges.map((edge) => {
                 const src = nodesById.get(edge.source);
                 const tgt = nodesById.get(edge.target);
                 if (!src || !tgt) return null;
 
-                const x1 = src.x + 85;
-                const y1 = src.y + 38;
-                const x2 = tgt.x + 85;
-                const y2 = tgt.y + 38;
+                // CRITICAL FIX: If either endpoint is not visible on the current floor filter,
+                // NEVER draw lines into empty void! Cross-floor connections are rendered as Uplink Badges on the node card!
+                if (!visibleNodeIdSet.has(edge.source) || !visibleNodeIdSet.has(edge.target)) {
+                  return null;
+                }
+
+                // Dynamic coordinate centering
+                const x1 = src.x + 95;
+                const y1 = src.y + 45;
+                const x2 = tgt.x + 95;
+                const y2 = tgt.y + 45;
 
                 const isHighlighted =
                   selectedNode &&
                   (edge.source === selectedNode.id || edge.target === selectedNode.id);
 
-                const strokeColor = !edge.is_forwarding
-                  ? "#64748b"
-                  : isHighlighted
-                  ? "#facc15"
-                  : LAYER_COLORS[edge.layer] ?? "#38bdf8";
+                let strokeColor = LAYER_COLORS[edge.layer] ?? "#38bdf8";
+                let markerId = "url(#arrow-wired)";
+                if (edge.layer === "SONOS_MESH") {
+                  markerId = "url(#arrow-forward)";
+                  strokeColor = "#10b981";
+                } else if (edge.layer === "WIFI_INFRA") {
+                  markerId = "url(#arrow-wifi)";
+                  strokeColor = "#a855f7";
+                }
+
+                if (!edge.is_forwarding) {
+                  strokeColor = "#64748b";
+                  markerId = "url(#arrow-blocking)";
+                }
+
+                if (isHighlighted) {
+                  strokeColor = "#facc15";
+                  markerId = "url(#arrow-highlight)";
+                }
 
                 return (
                   <g key={edge.id}>
@@ -391,63 +526,17 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                       x2={x2}
                       y2={y2}
                       stroke={strokeColor}
-                      strokeWidth={isHighlighted ? 3 : 2}
-                      strokeDasharray={edge.is_forwarding ? "none" : "6 4"}
-                      markerEnd={
-                        edge.is_forwarding ? "url(#arrow-forward)" : "url(#arrow-blocking)"
-                      }
+                      strokeWidth={isHighlighted ? 3.5 : edge.is_forwarding ? 2.2 : 1.5}
+                      strokeDasharray={edge.is_forwarding ? "none" : "5 4"}
+                      markerEnd={markerId}
                     />
                   </g>
                 );
               })}
             </svg>
 
-            {/* Edge Label Pills Layer */}
-            <div style={{ position: "relative", zIndex: 2, marginBottom: "16px" }}>
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "6px",
-                  marginBottom: "12px",
-                }}
-              >
-                {visibleEdges.map((edge) => {
-                  const gradeStyle =
-                    GRADE_STYLES[edge.health_grade] ?? GRADE_STYLES.GOOD;
-                  const isHighlighted =
-                    selectedNode &&
-                    (edge.source === selectedNode.id || edge.target === selectedNode.id);
-                  return (
-                    <div
-                      key={edge.id}
-                      data-testid={`topology-edge-${edge.id}`}
-                      style={{
-                        fontSize: "0.72rem",
-                        padding: "3px 8px",
-                        borderRadius: "999px",
-                        backgroundColor: isHighlighted ? "#422006" : "#1e293b",
-                        color: edge.is_forwarding ? gradeStyle.text : "#94a3b8",
-                        border: edge.is_forwarding
-                          ? `1px solid ${gradeStyle.border}`
-                          : "1px dashed #64748b",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "6px",
-                      }}
-                    >
-                      <span style={{ fontWeight: 700, color: "#cbd5e1" }}>
-                        {edge.source_name} ➔ {edge.target_name}:
-                      </span>
-                      <span>{edge.label}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Interactive Device Nodes Canvas */}
-            <div style={{ position: "relative", width: "1020px", height: "760px" }}>
+            {/* Interactive Device Nodes Layer */}
+            <div style={{ position: "relative", width: "1030px", height: "860px" }}>
               {visibleNodes.map((node) => {
                 const gradeStyle =
                   GRADE_STYLES[node.health_grade] ?? GRADE_STYLES.GOOD;
@@ -458,6 +547,8 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                   selectedNode &&
                   selectedNode.room_slug &&
                   selectedNode.room_slug === node.room_slug;
+
+                const crossFloorEntries = crossFloorLinksByNode.get(node.id) ?? [];
 
                 return (
                   <div
@@ -480,10 +571,14 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                       borderRadius: "8px",
                       padding: "8px 10px",
                       cursor: "pointer",
-                      boxShadow: "0 4px 10px rgba(0, 0, 0, 0.35)",
+                      boxShadow: isSelected
+                        ? "0 0 16px rgba(56, 189, 248, 0.4)"
+                        : "0 4px 10px rgba(0, 0, 0, 0.35)",
                       zIndex: isSelected ? 10 : 5,
+                      transition: "transform 0.15s ease, box-shadow 0.15s ease",
                     }}
                   >
+                    {/* Role & Health Grade Badges */}
                     <div
                       style={{
                         display: "flex",
@@ -519,6 +614,7 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                       </span>
                     </div>
 
+                    {/* Node Name */}
                     <div
                       style={{
                         fontWeight: 700,
@@ -530,11 +626,13 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                       {node.name}
                     </div>
 
+                    {/* IP & Connection Mode */}
                     <div style={{ fontSize: "0.68rem", color: "#94a3b8" }}>
                       {node.ip_address ?? "Bonded"} ·{" "}
                       {node.connection_mode ?? node.model_name}
                     </div>
 
+                    {/* AP Radio Channels */}
                     {node.ap_channels && (
                       <div
                         style={{
@@ -547,36 +645,160 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                       </div>
                     )}
 
+                    {/* Sonos Player Live RF & Cleanliness Telemetry */}
                     {node.device_role === "SONOS_PLAYER" && (
-                      <div
-                        style={{
-                          fontSize: "0.66rem",
-                          color: "#cbd5e1",
-                          marginTop: "3px",
-                          display: "flex",
-                          flexWrap: "wrap",
-                          gap: "6px",
-                        }}
-                      >
-                        <span>
-                          {node.ofdm_ani_level != null
-                            ? `ANI ${node.ofdm_ani_level}`
-                            : "ANI N/A"}
-                        </span>
-                        {node.phy_error_rate != null && (
-                          <span>{`${node.phy_error_rate.toFixed(1)} err/s`}</span>
-                        )}
-                        {node.stp_path_cost != null && (
-                          <span>{`STP Cost ${node.stp_path_cost}`}</span>
-                        )}
-                        {node.rssi_dbm != null && (
-                          <span>{`${node.rssi_dbm} dBm`}</span>
-                        )}
+                      <div style={{ marginTop: "6px" }}>
+                        <div style={{ marginBottom: "4px" }}>
+                          <AniCleanlinessMeter
+                            aniLevel={node.ofdm_ani_level}
+                            compact={true}
+                            showExplanation={false}
+                          />
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "0.66rem",
+                            color: "#cbd5e1",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            flexWrap: "wrap",
+                            gap: "4px",
+                          }}
+                        >
+                          {node.phy_error_rate != null ? (
+                            <span
+                              style={{
+                                color:
+                                  node.phy_error_rate > 100
+                                    ? "#f87171"
+                                    : node.phy_error_rate > 20
+                                    ? "#fbbf24"
+                                    : "#86efac",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {node.phy_error_rate.toFixed(1)} err/s
+                            </span>
+                          ) : (
+                            <span>0.0 err/s</span>
+                          )}
+                          {node.stp_path_cost != null && (
+                            <span style={{ color: "#94a3b8" }}>Cost {node.stp_path_cost}</span>
+                          )}
+                          {node.rssi_dbm != null && (
+                            <span style={{ color: "#38bdf8" }}>{node.rssi_dbm} dBm</span>
+                          )}
+                        </div>
                       </div>
                     )}
+
+                    {/* Cross-Floor Uplink / Downlink Anchor Badges (Eliminates boxes hanging in thin air!) */}
+                    {crossFloorEntries.map(({ edge, isOutgoing }) => {
+                      const otherNode = nodesById.get(isOutgoing ? edge.target : edge.source);
+                      return (
+                        <div
+                          key={`cross-anchor-${edge.id}`}
+                          style={{
+                            marginTop: "6px",
+                            padding: "3px 6px",
+                            backgroundColor: "#1e1b4b",
+                            border: "1px solid #6366f1",
+                            borderRadius: "4px",
+                            fontSize: "0.64rem",
+                            color: "#c7d2fe",
+                          }}
+                          title={`Connected across floors to ${otherNode?.name ?? "other node"}`}
+                        >
+                          <div style={{ fontWeight: 700, color: "#a5b4fc" }}>
+                            {isOutgoing ? "▲ Uplink:" : "▼ Downlink:"} {otherNode?.name ?? "Node"} ({otherNode?.floor_name ?? "Floor"})
+                          </div>
+                          <div style={{ color: "#e0e7ff", fontSize: "0.62rem" }}>
+                            {edge.label}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}
+            </div>
+
+            {/* Collapsible Active Network Links & Path Telemetry Strip */}
+            <div
+              style={{
+                marginTop: "16px",
+                backgroundColor: "#0b1329",
+                borderRadius: "8px",
+                border: "1px solid #1e293b",
+                padding: "12px 16px",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  cursor: "pointer",
+                  marginBottom: showEdgeList ? "10px" : "0",
+                }}
+                onClick={() => setShowEdgeList(!showEdgeList)}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#e2e8f0" }}>
+                    Active Network Links &amp; Path Telemetry ({visibleEdges.length})
+                  </span>
+                  <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
+                    (Forwarding audio tree &amp; physical trunks)
+                  </span>
+                </div>
+                <span style={{ fontSize: "0.74rem", color: "#38bdf8", fontWeight: 600 }}>
+                  {showEdgeList ? "▲ Hide Details" : "▼ Show Details"}
+                </span>
+              </div>
+
+              {showEdgeList && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "6px",
+                    maxHeight: "180px",
+                    overflowY: "auto",
+                  }}
+                >
+                  {visibleEdges.map((edge) => {
+                    const gradeStyle =
+                      GRADE_STYLES[edge.health_grade] ?? GRADE_STYLES.GOOD;
+                    const isHighlighted =
+                      selectedNode &&
+                      (edge.source === selectedNode.id || edge.target === selectedNode.id);
+                    return (
+                      <div
+                        key={edge.id}
+                        data-testid={`topology-edge-${edge.id}`}
+                        style={{
+                          fontSize: "0.72rem",
+                          padding: "3px 8px",
+                          borderRadius: "999px",
+                          backgroundColor: isHighlighted ? "#422006" : "#1e293b",
+                          color: edge.is_forwarding ? gradeStyle.text : "#94a3b8",
+                          border: edge.is_forwarding
+                            ? `1px solid ${gradeStyle.border}`
+                            : "1px dashed #64748b",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "6px",
+                        }}
+                      >
+                        <span style={{ fontWeight: 700, color: "#cbd5e1" }}>
+                          {edge.source_name} ➔ {edge.target_name}:
+                        </span>
+                        <span>{edge.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 
@@ -652,10 +874,10 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                 )}
                 {selectedNode.ofdm_ani_level !== undefined && (
                   <div>
-                    <strong>OFDM ANI Level:</strong>{" "}
-                    {selectedNode.ofdm_ani_level != null
-                      ? selectedNode.ofdm_ani_level
-                      : "N/A"}
+                    <strong>OFDM ANI Level:</strong>
+                    <div style={{ marginTop: "4px" }}>
+                      <AniCleanlinessMeter aniLevel={selectedNode.ofdm_ani_level} />
+                    </div>
                   </div>
                 )}
                 {selectedNode.phy_error_rate != null && (
