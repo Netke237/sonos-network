@@ -18,8 +18,8 @@
       "status": "in_progress",
       "plan_audit_rounds": 2,
       "plan_audit_clean": true,
-      "code_audit_rounds": 0,
-      "audit_clean": false,
+      "code_audit_rounds": 2,
+      "audit_clean": true,
       "rounds": [
         {
           "stage": "plan",
@@ -37,6 +37,24 @@
           "findings_count": 0,
           "findings": [],
           "fixes": "Verified all Round 1 fixes and cross-document interactions clean.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 1,
+          "reviewer": "d57850c3-c6ef-4f1f-ae96-22fcee0852fa (Independent Code Gate Auditor)",
+          "findings_count": 1,
+          "findings": ["GATE-01"],
+          "fixes": "Resolved GATE-01: fixed fallback PlayerTelemetryDto instantiation in evaluate_house_diagnostics and get_house_overview to use d.base_mac and d.sonosnet_bssid with valid ConnectionMode enum coercion, preventing HTTP 500 crash on unprofiled devices. Added regression test in test_t1_inventory_and_crud.py.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 2,
+          "reviewer": "2c2446a0-2cd8-4364-b1a2-067907f4a1ff (Independent Code Gate Auditor)",
+          "findings_count": 0,
+          "findings": [],
+          "fixes": "Verified GATE-01 fix and cross-module interactions clean. Full backend (33/33) and frontend (9/9) suites passing.",
           "outstanding": []
         }
       ]
