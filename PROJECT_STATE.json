@@ -1,7 +1,7 @@
 {
   "project": "sonos-network",
   "repo": "Netke237/sonos-network",
-  "active_phase": null,
+  "active_phase": "PHASE-1.5-UX-REDESIGN",
   "audit_rule": {
     "max_rounds_per_stage": 3,
     "gate_criteria": [
@@ -64,6 +64,35 @@
           "findings_count": 0,
           "findings": [],
           "fixes": "Verified all Round 1 and Round 2 fixes clean. All 34 backend tests and 9 frontend tests pass. Deployed and verified on Mini PC production.",
+          "outstanding": []
+        }
+      ]
+    },
+    {
+      "id": "PHASE-1.5-UX-REDESIGN",
+      "title": "Intuitive Topology Graph, Keller Cross-Floor Anchors & Live Waveform Oscilloscope",
+      "status": "in_progress",
+      "plan_audit_rounds": 0,
+      "plan_audit_clean": true,
+      "code_audit_rounds": 2,
+      "audit_clean": true,
+      "rounds": [
+        {
+          "stage": "code",
+          "round": 1,
+          "reviewer": "dd3bb6d1-9fee-4c9d-9bf1-ee6b730f0225 (Independent Phase 1.5 Code Gate Auditor)",
+          "findings_count": 2,
+          "findings": ["CF-UX-01", "CF-UX-02"],
+          "fixes": "Resolved CF-UX-01 (inverted Uplink/Downlink badge direction on cross-floor links in TopologyGraphView.tsx) and CF-UX-02 (TS2353 compilation error in OscilloscopeAndAniMeter.test.tsx by removing room_slug and ping_rtt_ms from mock LiveRfSample).",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 2,
+          "reviewer": "2039399d-66bd-4dd3-b893-a59012b5c3f1 (Independent Phase 1.5 Code Gate Auditor)",
+          "findings_count": 0,
+          "findings": [],
+          "fixes": "Verified CF-UX-01 and CF-UX-02 fixes clean. Full test suites pass: 17/17 frontend tests (Vitest), tsc --noEmit (0 errors), and 34/34 backend tests (pytest).",
           "outstanding": []
         }
       ]
