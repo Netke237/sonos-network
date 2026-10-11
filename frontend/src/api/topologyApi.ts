@@ -1,5 +1,7 @@
 import type {
   ConnectionMode,
+  DaemonCollectResult,
+  DaemonStatus,
   DeviceRole,
   GhostFlushResult,
   HealthGrade,
@@ -10,6 +12,7 @@ import type {
   PingSweepResult,
   Room,
   RoomDiagnosticSummary,
+  RoomHistoryResponse,
   SurveyComparisonDelta,
   SwitchPort,
   TopologyGraphResponse,
@@ -267,4 +270,36 @@ export async function fetchSurveyDelta(
   }
   return resp.json();
 }
+
+export async function fetchRoomHistory(
+  roomSlug: string,
+  range = "24h"
+): Promise<RoomHistoryResponse> {
+  const resp = await fetch(
+    `${API_BASE}/api/rooms/${roomSlug}/history?range=${encodeURIComponent(range)}`
+  );
+  if (!resp.ok) {
+    throw new Error(`Failed to load history for ${roomSlug}: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function fetchDaemonStatus(): Promise<DaemonStatus> {
+  const resp = await fetch(`${API_BASE}/api/daemon/status`);
+  if (!resp.ok) {
+    throw new Error(`Failed to load daemon status: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function triggerDaemonCollect(): Promise<DaemonCollectResult> {
+  const resp = await fetch(`${API_BASE}/api/daemon/collect-now`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to trigger daemon collection: ${resp.status}`);
+  }
+  return resp.json();
+}
+
 

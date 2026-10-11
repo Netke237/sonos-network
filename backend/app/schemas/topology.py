@@ -732,4 +732,61 @@ class SurveyComparisonDeltaSchema(BaseModel):
     bssid_deltas: list[BssidDeltaItemSchema] = []
 
 
+class PlayerHistorySampleSchema(BaseModel):
+    rincon_uuid: str
+    zone_name: str
+    connection_mode: str
+    ofdm_ani_level: int | None = None
+    noise_floor_dbm: int | None = None
+    phy_error_rate: float | None = None
+    ping_rtt_ms: float | None = None
+    stp_path_cost: int | None = None
+
+
+class RoomHistoryPointSchema(BaseModel):
+    timestamp: datetime
+    batch_id: str | None = None
+    consumer_id: str | None = None
+    peak_ofdm_ani_level: int | None = None
+    total_phy_error_rate: float | None = None
+    avg_ping_rtt_ms: float | None = None
+    best_5ghz_dbm: int | None = None
+    best_24ghz_dbm: int | None = None
+    link_speed_mbps: int | None = None
+    worst_stp_path_cost: int | None = None
+    health_grade: str = "GOOD"
+    players: list[PlayerHistorySampleSchema] = []
+
+
+class RoomHistoryResponseSchema(BaseModel):
+    room_id: str
+    room_slug: str
+    room_name: str
+    time_range: str
+    total_samples: int
+    peak_ani: int | None = None
+    avg_phy_error_rate: float | None = None
+    avg_ping_rtt_ms: float | None = None
+    summary: str
+    samples: list[RoomHistoryPointSchema] = []
+
+
+class DaemonStatusSchema(BaseModel):
+    is_running: bool
+    interval_sec: float
+    retention_days: int
+    last_cycle_at: datetime | None = None
+    total_cycles: int = 0
+    last_error: str | None = None
+
+
+class DaemonCollectResultSchema(BaseModel):
+    status: str
+    batch_id: str
+    total_players: int
+    pruned_count: int
+    executed_at: datetime
+
+
+
 

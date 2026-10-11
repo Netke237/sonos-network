@@ -498,5 +498,62 @@ export interface LiveRfFrame {
   samples: LiveRfSample[];
 }
 
+export interface PlayerHistorySample {
+  rincon_uuid: string;
+  zone_name: string;
+  connection_mode: string;
+  ofdm_ani_level?: number | null;
+  noise_floor_dbm?: number | null;
+  phy_error_rate?: number | null;
+  ping_rtt_ms?: number | null;
+  stp_path_cost?: number | null;
+}
+
+export interface RoomHistoryPoint {
+  timestamp: string;
+  batch_id?: string | null;
+  consumer_id?: string | null;
+  peak_ofdm_ani_level?: number | null;
+  total_phy_error_rate?: number | null;
+  avg_ping_rtt_ms?: number | null;
+  best_5ghz_dbm?: number | null;
+  best_24ghz_dbm?: number | null;
+  link_speed_mbps?: number | null;
+  worst_stp_path_cost?: number | null;
+  health_grade: string;
+  players: PlayerHistorySample[];
+}
+
+export interface RoomHistoryResponse {
+  room_id: string;
+  room_slug: string;
+  room_name: string;
+  time_range: string;
+  total_samples: number;
+  peak_ani?: number | null;
+  avg_phy_error_rate?: number | null;
+  avg_ping_rtt_ms?: number | null;
+  summary: string;
+  samples: RoomHistoryPoint[];
+}
+
+export interface DaemonStatus {
+  is_running: boolean;
+  interval_sec: number;
+  retention_days: number;
+  last_cycle_at?: string | null;
+  total_cycles: number;
+  last_error?: string | null;
+}
+
+export interface DaemonCollectResult {
+  status: string;
+  batch_id: string;
+  total_players: number;
+  pruned_count: number;
+  executed_at: string;
+}
+
+
 
 

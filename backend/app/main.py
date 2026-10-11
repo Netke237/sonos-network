@@ -33,6 +33,7 @@ from app.modules.sonos_telemetry import (
     HttpSonosAdapter,
     SonosTelemetryPort,
 )
+from app.modules.telemetry_daemon import ScheduledTelemetryCollector
 from app.modules.wifi_omada import (
     FakeWiFiAdapter,
     OmadaAndAdbWiFiAdapter,
@@ -40,6 +41,7 @@ from app.modules.wifi_omada import (
 )
 from app.repositories.topology_repository import SqlAlchemyTopologyRepository
 from app.schemas.topology import (
+    DaemonStatusSchema,
     FloorCreate,
     FloorRead,
     FloorUpdate,
@@ -54,6 +56,7 @@ from app.schemas.topology import (
     PingSweepResultSchema,
     RoomCreate,
     RoomDiagnosticSummarySchema,
+    RoomHistoryResponseSchema,
     RoomRead,
     RoomUpdate,
     SurveyComparisonDeltaSchema,
@@ -74,6 +77,7 @@ def create_app(
     wifi_adapter: WiFiTelemetryPort | None = None,
     probe_adapter: NetworkProbePort | None = None,
     diagnostic_engine: DiagnosticEnginePort | None = None,
+    enable_daemon: bool = False,
 ) -> FastAPI:
     engine, session_factory = build_engine_and_sessionmaker(database_url)
     default_adapter: SonosTelemetryPort = sonos_adapter or (
@@ -94,6 +98,14 @@ def create_app(
     default_diagnostic_engine: DiagnosticEnginePort = (
         diagnostic_engine or DiagnosticEngine()
     )
+    default_daemon = ScheduledTelemetryCollector(
+        session_factory=session_factory,
+        sonos_adapter=default_adapter,
+        wifi_adapter=default_wifi_adapter,
+        interval_sec=float(os.getenv("BACKGROUND_POLL_INTERVAL_SEC", "60.0")),
+        retention_days=int(os.getenv("TELEMETRY_RETENTION_DAYS", "7")),
+        consumer_id="background-60s",
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -103,13 +115,21 @@ def create_app(
         app.state.wifi_adapter = default_wifi_adapter
         app.state.probe_adapter = default_probe_adapter
         app.state.diagnostic_engine = default_diagnostic_engine
+        app.state.telemetry_daemon = default_daemon
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         async with session_factory() as session:
             await seed_initial_data(session)
+        daemon_enabled = (
+            enable_daemon or os.getenv("ENABLE_TELEMETRY_DAEMON", "0") == "1"
+        )
+        if daemon_enabled:
+            await default_daemon.start()
         try:
             yield
         finally:
+            if hasattr(app.state, "telemetry_daemon"):
+                await app.state.telemetry_daemon.stop()
             await engine.dispose()
 
     app = FastAPI(
@@ -123,6 +143,7 @@ def create_app(
     app.state.wifi_adapter = default_wifi_adapter
     app.state.probe_adapter = default_probe_adapter
     app.state.diagnostic_engine = default_diagnostic_engine
+    app.state.telemetry_daemon = default_daemon
 
     app.add_middleware(
         CORSMiddleware,
@@ -532,7 +553,36 @@ def create_app(
         await repo.apply_ping_sweep(result)
         return result
 
+    # --- 24/7 Background Telemetry Daemon & Historical Trends ---
+    @app.get(
+        "/api/rooms/{room_slug}/history",
+        response_model=RoomHistoryResponseSchema,
+    )
+    async def get_room_history(
+        room_slug: str,
+        range: str = Query("24h", pattern="^(1h|24h|7d)$"),
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+    ) -> RoomHistoryResponseSchema:
+        history = await repo.get_room_history(room_slug, time_range=range)
+        if not history:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Room '{room_slug}' not found",
+            )
+        return history
+
+    @app.get("/api/daemon/status", response_model=DaemonStatusSchema)
+    async def get_daemon_status(request: Request) -> DaemonStatusSchema:
+        daemon: ScheduledTelemetryCollector = request.app.state.telemetry_daemon
+        return daemon.status()
+
+    @app.post("/api/daemon/collect-now")
+    async def trigger_daemon_collect(request: Request) -> dict[str, Any]:
+        daemon: ScheduledTelemetryCollector = request.app.state.telemetry_daemon
+        return await daemon.collect_cycle()
+
     return app
+
 
 
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import re
 import uuid
 from typing import Protocol
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import (
@@ -38,9 +39,12 @@ from app.schemas.topology import (
     NetworkDeviceRead,
     NetworkDeviceUpdate,
     PingSweepResultSchema,
+    PlayerHistorySampleSchema,
     PlayerTelemetryDto,
     RoomCreate,
     RoomDiagnosticSummarySchema,
+    RoomHistoryPointSchema,
+    RoomHistoryResponseSchema,
     RoomMatrixItemDto,
     RoomRead,
     RoomUpdate,
@@ -389,6 +393,8 @@ class SqlAlchemyTopologyRepository:
 
         await self._session.commit()
         return snapshot
+
+    persist_household_snapshot = save_sonos_snapshot
 
     async def get_sonos_telemetry(
         self, batch_id: str | None = None
@@ -1326,6 +1332,154 @@ class SqlAlchemyTopologyRepository:
             room_slug=room_slug,
             include_blocking=include_blocking,
         )
+
+    async def prune_expired_telemetry(
+        self, retention_days: int = 7, consumer_id: str = "background-60s"
+    ) -> int:
+        """Prunes raw telemetry snapshots older than retention threshold for background collector."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        stmt = (
+            delete(SonosTelemetrySnapshot)
+            .where(
+                SonosTelemetrySnapshot.consumer_id == consumer_id,
+                SonosTelemetrySnapshot.captured_at < cutoff,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        res = await self._session.execute(stmt)
+        await self._session.commit()
+        return int(res.rowcount or 0)
+
+    async def get_room_history(
+        self, room_slug_or_id: str, time_range: str = "24h"
+    ) -> RoomHistoryResponseSchema | None:
+        """Queries and aggregates historical time-series telemetry for a specific room."""
+        room = await self.get_room_by_slug_or_id(room_slug_or_id)
+        if not room:
+            return None
+
+        now = datetime.now(timezone.utc)
+        if time_range == "1h":
+            cutoff = now - timedelta(hours=1)
+        elif time_range == "7d":
+            cutoff = now - timedelta(days=7)
+        else:
+            time_range = "24h"
+            cutoff = now - timedelta(hours=24)
+
+        dev_res = await self._session.execute(
+            select(NetworkDevice).where(NetworkDevice.room_id == room.id)
+        )
+        devs = list(dev_res.scalars().all())
+        dev_uuids = {d.rincon_uuid for d in devs if d.rincon_uuid}
+
+        filter_cond = SonosTelemetrySnapshot.room_id == room.id
+        if dev_uuids:
+            filter_cond = filter_cond | SonosTelemetrySnapshot.rincon_uuid.in_(dev_uuids)
+
+        snap_stmt = (
+            select(SonosTelemetrySnapshot)
+            .where(
+                filter_cond,
+                SonosTelemetrySnapshot.captured_at >= cutoff,
+            )
+            .order_by(SonosTelemetrySnapshot.captured_at.asc())
+        )
+        snap_res = await self._session.execute(snap_stmt)
+        snap_rows = list(snap_res.scalars().all())
+
+        # Fallback to seeded baseline snapshots if window has no samples
+        if not snap_rows:
+            fallback_stmt = (
+                select(SonosTelemetrySnapshot)
+                .where(filter_cond)
+                .order_by(SonosTelemetrySnapshot.captured_at.desc())
+                .limit(14)
+            )
+            fallback_res = await self._session.execute(fallback_stmt)
+            snap_rows = list(reversed(fallback_res.scalars().all()))
+
+        batches: dict[str, list[SonosTelemetrySnapshot]] = {}
+        for r in snap_rows:
+            b_key = r.batch_id or r.captured_at.isoformat()
+            batches.setdefault(b_key, []).append(r)
+
+        survey_stmt = (
+            select(WiFiRoomSurvey)
+            .where(WiFiRoomSurvey.room_id == room.id)
+            .order_by(WiFiRoomSurvey.captured_at.desc())
+            .limit(1)
+        )
+        survey_res = await self._session.execute(survey_stmt)
+        latest_survey = survey_res.scalar_one_or_none()
+
+        points: list[RoomHistoryPointSchema] = []
+        for b_id, rows in batches.items():
+            first = rows[0]
+            ani_vals = [r.ofdm_ani_level for r in rows if r.ofdm_ani_level is not None]
+            phy_vals = [r.phy_error_rate for r in rows if r.phy_error_rate is not None]
+            ping_vals = [r.ping_rtt_ms for r in rows if r.ping_rtt_ms is not None]
+            stp_vals = [r.stp_path_cost for r in rows if r.stp_path_cost is not None]
+
+            players = [
+                PlayerHistorySampleSchema(
+                    rincon_uuid=r.rincon_uuid,
+                    zone_name=r.zone_name,
+                    connection_mode=r.connection_mode,
+                    ofdm_ani_level=r.ofdm_ani_level,
+                    noise_floor_dbm=r.noise_floor_dbm,
+                    phy_error_rate=r.phy_error_rate,
+                    ping_rtt_ms=r.ping_rtt_ms,
+                    stp_path_cost=r.stp_path_cost,
+                )
+                for r in rows
+            ]
+
+            points.append(
+                RoomHistoryPointSchema(
+                    timestamp=first.captured_at,
+                    batch_id=b_id,
+                    consumer_id=first.consumer_id,
+                    peak_ofdm_ani_level=max(ani_vals) if ani_vals else None,
+                    total_phy_error_rate=round(sum(phy_vals), 1) if phy_vals else None,
+                    avg_ping_rtt_ms=round(sum(ping_vals) / len(ping_vals), 1) if ping_vals else None,
+                    best_5ghz_dbm=latest_survey.best_5ghz_dbm if latest_survey else room.best_5ghz_rssi_dbm,
+                    best_24ghz_dbm=latest_survey.best_24ghz_dbm if latest_survey else room.best_24ghz_rssi_dbm,
+                    link_speed_mbps=latest_survey.link_speed_mbps if latest_survey else None,
+                    worst_stp_path_cost=max(stp_vals) if stp_vals else None,
+                    health_grade=room.health_grade,
+                    players=players,
+                )
+            )
+
+        all_peak_anis = [p.peak_ofdm_ani_level for p in points if p.peak_ofdm_ani_level is not None]
+        all_phy_rates = [p.total_phy_error_rate for p in points if p.total_phy_error_rate is not None]
+        all_pings = [p.avg_ping_rtt_ms for p in points if p.avg_ping_rtt_ms is not None]
+
+        peak_ani = max(all_peak_anis) if all_peak_anis else None
+        avg_phy = round(sum(all_phy_rates) / len(all_phy_rates), 1) if all_phy_rates else None
+        avg_ping = round(sum(all_pings) / len(all_pings), 1) if all_pings else None
+
+        summary = (
+            f"Captured {len(points)} snapshot(s) for {room.name} over {time_range}. "
+            f"Peak OFDM ANI: {peak_ani if peak_ani is not None else 'N/A'}, "
+            f"Avg PHY Error Rate: {avg_phy if avg_phy is not None else 0.0} err/s, "
+            f"Avg Ping RTT: {avg_ping if avg_ping is not None else 'N/A'} ms."
+        )
+
+        return RoomHistoryResponseSchema(
+            room_id=room.id,
+            room_slug=room.slug,
+            room_name=room.name,
+            time_range=time_range,
+            total_samples=len(points),
+            peak_ani=peak_ani,
+            avg_phy_error_rate=avg_phy,
+            avg_ping_rtt_ms=avg_ping,
+            summary=summary,
+            samples=points,
+        )
+
 
 
 

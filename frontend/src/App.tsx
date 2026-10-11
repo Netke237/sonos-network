@@ -6,24 +6,29 @@ import {
   createRoom,
   createRoomSurvey,
   createSwitchPort,
+  fetchDaemonStatus,
   fetchHouseOverview,
   fetchRoomDiagnostics,
+  fetchRoomHistory,
   fetchRoomSurveys,
   fetchSurveyDelta,
   flushGhostGroups,
   pollLiveSonosNow,
   runPingSweep,
+  triggerDaemonCollect,
 } from "./api/topologyApi";
 import { TopologyGraphView } from "./components/TopologyGraphView";
 import type {
   BssidClassification,
   ConnectionMode,
+  DaemonStatus,
   DeviceRole,
   FloorMatrixItem,
   HealthGrade,
   HouseOverview,
   LiveRfSample,
   RoomDiagnosticSummary,
+  RoomHistoryResponse,
   RoomMatrixItem,
   SolutionProposal,
   SurveyComparisonDelta,
@@ -72,6 +77,13 @@ export default function App() {
   const [liveRfConnected, setLiveRfConnected] = useState<boolean>(false);
   const [liveRfPaused, setLiveRfPaused] = useState<boolean>(false);
   const [liveRfRoomFilter, setLiveRfRoomFilter] = useState<string>("all");
+
+  // T7 Historical Trends & Daemon State
+  const [selectedHistoryRoom, setSelectedHistoryRoom] = useState<RoomMatrixItem | null>(null);
+  const [roomHistory, setRoomHistory] = useState<RoomHistoryResponse | null>(null);
+  const [historyRange, setHistoryRange] = useState<"1h" | "24h" | "7d">("24h");
+  const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
+  const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
 
   // Room Survey Form State
   const [surveyLabel, setSurveyLabel] = useState<string>("");
@@ -127,6 +139,59 @@ export default function App() {
   useEffect(() => {
     void loadData(includeArchived);
   }, [includeArchived]);
+
+  useEffect(() => {
+    void fetchDaemonStatus().then(setDaemonStatus).catch(() => {});
+  }, []);
+
+  const handleOpenRoomHistory = async (
+    room: RoomMatrixItem,
+    range: "1h" | "24h" | "7d" = "24h"
+  ) => {
+    setSelectedHistoryRoom(room);
+    setHistoryRange(range);
+    try {
+      setLoadingHistory(true);
+      const hist = await fetchRoomHistory(room.slug, range);
+      setRoomHistory(hist);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load room history");
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const handleChangeHistoryRange = async (range: "1h" | "24h" | "7d") => {
+    setHistoryRange(range);
+    if (selectedHistoryRoom) {
+      try {
+        setLoadingHistory(true);
+        const hist = await fetchRoomHistory(selectedHistoryRoom.slug, range);
+        setRoomHistory(hist);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load room history");
+      } finally {
+        setLoadingHistory(false);
+      }
+    }
+  };
+
+  const handleTriggerDaemonCollect = async () => {
+    try {
+      const res = await triggerDaemonCollect();
+      setActionBanner(
+        `24/7 Telemetry Cycle Executed: Snapshot ${res.batch_id} (${res.total_players} players, ${res.pruned_count} pruned)`
+      );
+      await loadData();
+      if (selectedHistoryRoom) {
+        await handleOpenRoomHistory(selectedHistoryRoom, historyRange);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to trigger daemon collection"
+      );
+    }
+  };
 
   useEffect(() => {
     if (activeViewTab !== "LIVE_RF" || liveRfPaused) return;
@@ -445,6 +510,35 @@ export default function App() {
           >
             Flush Ghost Groups
           </button>
+          <button
+            type="button"
+            onClick={() => void handleTriggerDaemonCollect()}
+            style={{
+              backgroundColor: "#0284c7",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 14px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Run 24/7 Daemon Cycle
+          </button>
+          <span
+            role="status"
+            style={{
+              backgroundColor: "#064e3b",
+              border: "1px solid #10b981",
+              color: "#6ee7b7",
+              padding: "6px 10px",
+              borderRadius: "6px",
+              fontSize: "0.78rem",
+              fontWeight: 700,
+            }}
+          >
+            24/7 Daemon: {daemonStatus?.interval_sec ? `${daemonStatus.interval_sec}s` : "60s"}
+          </span>
           <button
             type="button"
             onClick={() => setCrudOpen((prev) => !prev)}
@@ -1494,6 +1588,25 @@ export default function App() {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
+                          void handleOpenRoomHistory(room);
+                        }}
+                        style={{
+                          backgroundColor: "#0284c7",
+                          color: "#ffffff",
+                          border: "none",
+                          borderRadius: "4px",
+                          padding: "4px 8px",
+                          fontSize: "0.72rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Historical Trends
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
                           void handleArchiveRoom(room.id);
                         }}
                         style={{
@@ -1988,6 +2101,318 @@ export default function App() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Room Historical Trends Drawer */}
+      {selectedHistoryRoom && (
+        <section
+          role="region"
+          aria-label="Room Historical Trends Drawer"
+          style={{
+            marginTop: "24px",
+            backgroundColor: "#1e293b",
+            border: "1px solid #0284c7",
+            borderRadius: "10px",
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: "16px",
+              flexWrap: "wrap",
+              gap: "10px",
+            }}
+          >
+            <div>
+              <h3 style={{ margin: 0, fontSize: "1.2rem", color: "#f8fafc" }}>
+                Room Historical Trends: {selectedHistoryRoom.name}
+              </h3>
+              <p
+                style={{
+                  margin: "4px 0 0",
+                  color: "#94a3b8",
+                  fontSize: "0.82rem",
+                }}
+              >
+                Time-series Sonos RF, PHY error rate, ping latency &amp; Wi-Fi telemetry from 24/7 background collector
+              </p>
+            </div>
+
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: "4px" }}>
+                {(["1h", "24h", "7d"] as const).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => void handleChangeHistoryRange(r)}
+                    style={{
+                      backgroundColor: historyRange === r ? "#0284c7" : "#0f172a",
+                      color: "#f8fafc",
+                      border: "1px solid #38bdf8",
+                      borderRadius: "4px",
+                      padding: "4px 10px",
+                      fontSize: "0.78rem",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedHistoryRoom(null)}
+                style={{
+                  background: "transparent",
+                  border: "1px solid #64748b",
+                  borderRadius: "4px",
+                  color: "#94a3b8",
+                  padding: "4px 10px",
+                  cursor: "pointer",
+                  fontSize: "0.8rem",
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+          {loadingHistory && (
+            <p style={{ color: "#38bdf8" }}>Loading history telemetry...</p>
+          )}
+
+          {roomHistory && (
+            <div>
+              {/* Metric KPI cards */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                  gap: "12px",
+                  marginBottom: "16px",
+                }}
+              >
+                <div
+                  style={{
+                    backgroundColor: "#0f172a",
+                    padding: "12px",
+                    borderRadius: "8px",
+                    border: "1px solid #334155",
+                  }}
+                >
+                  <div style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
+                    PEAK OFDM ANI
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "1.4rem",
+                      fontWeight: 700,
+                      color:
+                        roomHistory.peak_ani && roomHistory.peak_ani >= 7
+                          ? "#ef4444"
+                          : "#38bdf8",
+                    }}
+                  >
+                    {roomHistory.peak_ani !== null &&
+                    roomHistory.peak_ani !== undefined
+                      ? `ANI ${roomHistory.peak_ani}`
+                      : "N/A"}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    backgroundColor: "#0f172a",
+                    padding: "12px",
+                    borderRadius: "8px",
+                    border: "1px solid #334155",
+                  }}
+                >
+                  <div style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
+                    AVG PHY ERROR RATE
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "1.4rem",
+                      fontWeight: 700,
+                      color:
+                        roomHistory.avg_phy_error_rate &&
+                        roomHistory.avg_phy_error_rate > 100
+                          ? "#ef4444"
+                          : "#10b981",
+                    }}
+                  >
+                    {roomHistory.avg_phy_error_rate !== null &&
+                    roomHistory.avg_phy_error_rate !== undefined
+                      ? `${roomHistory.avg_phy_error_rate} err/s`
+                      : "0.0 err/s"}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    backgroundColor: "#0f172a",
+                    padding: "12px",
+                    borderRadius: "8px",
+                    border: "1px solid #334155",
+                  }}
+                >
+                  <div style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
+                    AVG PING RTT
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "1.4rem",
+                      fontWeight: 700,
+                      color: "#38bdf8",
+                    }}
+                  >
+                    {roomHistory.avg_ping_rtt_ms !== null &&
+                    roomHistory.avg_ping_rtt_ms !== undefined
+                      ? `${roomHistory.avg_ping_rtt_ms} ms`
+                      : "N/A"}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    backgroundColor: "#0f172a",
+                    padding: "12px",
+                    borderRadius: "8px",
+                    border: "1px solid #334155",
+                  }}
+                >
+                  <div style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
+                    TOTAL SAMPLES
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "1.4rem",
+                      fontWeight: 700,
+                      color: "#f8fafc",
+                    }}
+                  >
+                    {roomHistory.total_samples}
+                  </div>
+                </div>
+              </div>
+
+              {/* Narrative Summary */}
+              <div
+                style={{
+                  backgroundColor: "#0f172a",
+                  padding: "10px 14px",
+                  borderRadius: "6px",
+                  marginBottom: "16px",
+                  fontSize: "0.82rem",
+                  color: "#cbd5e1",
+                  borderLeft: "3px solid #0284c7",
+                }}
+              >
+                {roomHistory.summary}
+              </div>
+
+              {/* History Samples Timeline Table */}
+              <div style={{ overflowX: "auto" }}>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: "0.78rem",
+                  }}
+                >
+                  <thead>
+                    <tr
+                      style={{
+                        background: "#0f172a",
+                        color: "#94a3b8",
+                        textAlign: "left",
+                      }}
+                    >
+                      <th style={{ padding: "8px" }}>Timestamp</th>
+                      <th style={{ padding: "8px" }}>Peak ANI</th>
+                      <th style={{ padding: "8px" }}>PHY Err/s</th>
+                      <th style={{ padding: "8px" }}>Ping RTT</th>
+                      <th style={{ padding: "8px" }}>5 GHz RSSI</th>
+                      <th style={{ padding: "8px" }}>STP Cost</th>
+                      <th style={{ padding: "8px" }}>Health Grade</th>
+                      <th style={{ padding: "8px" }}>Players</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {roomHistory.samples.map((pt, idx) => (
+                      <tr
+                        key={idx}
+                        style={{ borderBottom: "1px solid #334155" }}
+                      >
+                        <td style={{ padding: "8px", color: "#94a3b8" }}>
+                          {pt.timestamp}
+                        </td>
+                        <td
+                          style={{
+                            padding: "8px",
+                            fontWeight: 700,
+                            color:
+                              pt.peak_ofdm_ani_level &&
+                              pt.peak_ofdm_ani_level >= 7
+                                ? "#ef4444"
+                                : "#f8fafc",
+                          }}
+                        >
+                          {pt.peak_ofdm_ani_level !== null &&
+                          pt.peak_ofdm_ani_level !== undefined
+                            ? `ANI ${pt.peak_ofdm_ani_level}`
+                            : "N/A"}
+                        </td>
+                        <td style={{ padding: "8px" }}>
+                          {pt.total_phy_error_rate !== null &&
+                          pt.total_phy_error_rate !== undefined
+                            ? `${pt.total_phy_error_rate} err/s`
+                            : "-"}
+                        </td>
+                        <td style={{ padding: "8px" }}>
+                          {pt.avg_ping_rtt_ms !== null &&
+                          pt.avg_ping_rtt_ms !== undefined
+                            ? `${pt.avg_ping_rtt_ms} ms`
+                            : "-"}
+                        </td>
+                        <td style={{ padding: "8px" }}>
+                          {pt.best_5ghz_dbm !== null &&
+                          pt.best_5ghz_dbm !== undefined
+                            ? `${pt.best_5ghz_dbm} dBm`
+                            : "-"}
+                        </td>
+                        <td style={{ padding: "8px" }}>
+                          {pt.worst_stp_path_cost !== null &&
+                          pt.worst_stp_path_cost !== undefined
+                            ? pt.worst_stp_path_cost
+                            : "-"}
+                        </td>
+                        <td style={{ padding: "8px" }}>
+                          <span
+                            style={{
+                              backgroundColor: "#1e3a8a",
+                              padding: "2px 6px",
+                              borderRadius: "4px",
+                            }}
+                          >
+                            {pt.health_grade}
+                          </span>
+                        </td>
+                        <td style={{ padding: "8px", color: "#cbd5e1" }}>
+                          {pt.players
+                            .map((p) => `${p.zone_name} (${p.connection_mode})`)
+                            .join(", ") || "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </section>
