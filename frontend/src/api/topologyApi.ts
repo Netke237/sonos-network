@@ -3,10 +3,13 @@ import type {
   DeviceRole,
   GhostFlushResult,
   HealthGrade,
+  HouseDiagnosticReport,
   HouseholdSonosSnapshot,
   HouseOverview,
   NetworkDevice,
+  PingSweepResult,
   Room,
+  RoomDiagnosticSummary,
   SwitchPort,
   TopologyGraphResponse,
   WiFiRoomSurvey,
@@ -214,6 +217,34 @@ export async function createRoomSurvey(
   });
   if (!resp.ok) {
     throw new Error(`Failed to create survey for ${roomSlug}: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function fetchHouseDiagnostics(): Promise<HouseDiagnosticReport> {
+  const resp = await fetch(`${API_BASE}/api/diagnostics`);
+  if (!resp.ok) {
+    throw new Error(`Failed to load diagnostics: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function fetchRoomDiagnostics(
+  roomSlug: string
+): Promise<RoomDiagnosticSummary> {
+  const resp = await fetch(`${API_BASE}/api/rooms/${roomSlug}/diagnostics`);
+  if (!resp.ok) {
+    throw new Error(`Failed to load room diagnostics: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function runPingSweep(): Promise<PingSweepResult> {
+  const resp = await fetch(`${API_BASE}/api/actions/ping-sweep`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to run ping sweep: ${resp.status}`);
   }
   return resp.json();
 }

@@ -138,6 +138,10 @@ export interface RoomMatrixItem extends Room {
   rogue_count?: number;
   neighbor_count?: number;
   wifi_health_grade?: HealthGrade;
+  sonos_health_grade?: HealthGrade;
+  wired_health_grade?: HealthGrade;
+  active_diagnostics_count?: number;
+  top_diagnostic_title?: string | null;
   devices: NetworkDevice[];
   switch_ports: SwitchPort[];
 }
@@ -157,6 +161,8 @@ export interface HouseOverview {
   ghost_group_count?: number;
   has_ghost_groups?: boolean;
   ghost_group_zones?: string[];
+  active_diagnostics_count?: number;
+  critical_diagnostics_count?: number;
   latest_sonos_batch_id?: string | null;
   latest_sonos_captured_at?: string | null;
   floors: FloorMatrixItem[];
@@ -274,5 +280,146 @@ export interface TopologyGraphResponse {
   nodes: TopologyNode[];
   edges: DeviceConnectionEdge[];
 }
+
+export interface SolutionProposal {
+  id: string;
+  rank: number;
+  rule_code: string;
+  title: string;
+  description: string;
+  action_type: "ONE_CLICK" | "GUIDED_PHYSICAL" | string;
+  one_click_action?: string | null;
+  requires_sonosnet_disable_guard: boolean;
+  stp_guard_warning?: string | null;
+  target_room_slug?: string | null;
+  target_device_name?: string | null;
+}
+
+export interface RoomDiagnostic {
+  id: string;
+  room_slug: string;
+  room_name: string;
+  layer: "WIFI" | "SONOS" | "WIRED_VLAN" | string;
+  severity: HealthGrade;
+  rule_code: string;
+  title: string;
+  summary: string;
+  evidence: Record<string, unknown>;
+  affected_devices: string[];
+  solution_proposals: SolutionProposal[];
+}
+
+export interface WiFiPillarSummary {
+  health_grade: HealthGrade;
+  best_5ghz_dbm?: number | null;
+  best_24ghz_dbm?: number | null;
+  covering_ap_name?: string | null;
+  covering_ap_slug?: string | null;
+  link_speed_mbps?: number | null;
+  rogue_count: number;
+  neighbor_count: number;
+  co_channel_neighbors: string[];
+  has_channel_6_high_power_wifi: boolean;
+  summary_note: string;
+}
+
+export interface PlayerDiagnosticItem {
+  rincon_uuid: string;
+  zone_name: string;
+  ip_address?: string | null;
+  connection_mode: ConnectionMode | string;
+  ofdm_ani_level?: number | null;
+  noise_floor_dbm?: number | null;
+  phy_error_rate?: number | null;
+  designated_root?: string | null;
+  stp_path_cost?: number | null;
+  active_forwarding_snr_db?: number | null;
+  ping_rtt_ms?: number | null;
+  group_id?: string | null;
+  is_ghost_group: boolean;
+  rf_grade: HealthGrade;
+  link_grade: HealthGrade;
+  overall_grade: HealthGrade;
+  grading_rationale: string;
+}
+
+export interface SonosPillarSummary {
+  health_grade: HealthGrade;
+  total_players: number;
+  sonosnet_player_count: number;
+  station_mode_player_count: number;
+  ht_satellite_player_count: number;
+  wired_player_count: number;
+  designated_stp_root: string;
+  is_stp_root_healthy: boolean;
+  max_phy_error_rate: number;
+  max_stp_path_cost: number;
+  ghost_group_zones: string[];
+  players: PlayerDiagnosticItem[];
+  summary_note: string;
+}
+
+export interface WiredPillarSummary {
+  health_grade: HealthGrade;
+  has_vlan10_wall_jack: boolean;
+  port_numbers: number[];
+  pvid_list: number[];
+  bpdu_policy: string;
+  stp_root_guard_required: boolean;
+  stp_guard_note: string;
+}
+
+export interface RoomDiagnosticSummary {
+  room_id: string;
+  room_slug: string;
+  room_name: string;
+  floor_slug?: string | null;
+  floor_name?: string | null;
+  health_grade: HealthGrade;
+  active_diagnostics_count: number;
+  critical_count: number;
+  marginal_count: number;
+  top_diagnostic_title?: string | null;
+  wifi_pillar: WiFiPillarSummary;
+  sonos_pillar: SonosPillarSummary;
+  wired_pillar: WiredPillarSummary;
+  diagnostics: RoomDiagnostic[];
+  solution_proposals: SolutionProposal[];
+}
+
+export interface HouseDiagnosticReport {
+  evaluated_at: string;
+  overall_health_grade: HealthGrade;
+  designated_stp_root: string;
+  is_stp_root_healthy: boolean;
+  sonosnet_wireless_player_count: number;
+  total_diagnostics_count: number;
+  critical_diagnostics_count: number;
+  marginal_diagnostics_count: number;
+  house_diagnostics: RoomDiagnostic[];
+  rooms: RoomDiagnosticSummary[];
+}
+
+export interface PingSweepItem {
+  rincon_uuid: string;
+  zone_name: string;
+  room_slug?: string | null;
+  ip_address?: string | null;
+  is_reachable: boolean;
+  ping_rtt_ms: number;
+  jitter_ms: number;
+  dpc_ducking_risk: boolean;
+}
+
+export interface PingSweepResult {
+  swept_at: string;
+  total_probed: number;
+  reachable_count: number;
+  max_rtt_ms: number;
+  avg_rtt_ms: number;
+  dpc_risk_zones: string[];
+  results: PingSweepItem[];
+}
+
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from app.models.entities import ConnectionMode, DeviceRole, HealthGrade
@@ -199,6 +200,10 @@ class RoomMatrixItemDto(RoomRead):
     rogue_count: int = 0
     neighbor_count: int = 0
     wifi_health_grade: str = "GOOD"
+    sonos_health_grade: str = "GOOD"
+    wired_health_grade: str = "GOOD"
+    active_diagnostics_count: int = 0
+    top_diagnostic_title: str | None = None
     devices: list[NetworkDeviceRead] = []
     switch_ports: list[SwitchPortRead] = []
 
@@ -218,6 +223,8 @@ class HouseOverviewDto(BaseModel):
     ghost_group_count: int = 0
     has_ghost_groups: bool = False
     ghost_group_zones: list[str] = []
+    active_diagnostics_count: int = 0
+    critical_diagnostics_count: int = 0
     latest_sonos_batch_id: str | None = None
     latest_sonos_captured_at: datetime | None = None
     floors: list[FloorMatrixItemDto]
@@ -512,6 +519,157 @@ class TopologyGraphResponse(BaseModel):
 
 
 TopologyGraphDto = TopologyGraphResponse
+
+
+class SolutionProposalSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    rank: int
+    rule_code: str
+    title: str
+    description: str
+    action_type: str = "GUIDED_PHYSICAL"
+    one_click_action: str | None = None
+    requires_sonosnet_disable_guard: bool = False
+    stp_guard_warning: str | None = None
+    target_room_slug: str | None = None
+    target_device_name: str | None = None
+
+
+class RoomDiagnosticSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    room_slug: str
+    room_name: str
+    layer: str
+    severity: str
+    rule_code: str
+    title: str
+    summary: str
+    evidence: dict[str, Any] = {}
+    affected_devices: list[str] = []
+    solution_proposals: list[SolutionProposalSchema] = []
+
+
+class WiFiPillarSummarySchema(BaseModel):
+    health_grade: str
+    best_5ghz_dbm: int | None = None
+    best_24ghz_dbm: int | None = None
+    grade_5ghz: str = "GOOD"
+    grade_24ghz: str = "GOOD"
+    covering_ap_slug: str | None = None
+    covering_ap_name: str | None = None
+    connected_bssid: str | None = None
+    connected_ssid: str | None = None
+    link_speed_mbps: int | None = None
+    channel_summary: str = ""
+    rogue_count: int = 0
+    rogue_ssids: list[str] = []
+    neighbor_count: int = 0
+    co_channel_neighbors: list[str] = []
+    has_channel_6_high_power_wifi: bool = False
+
+
+class PlayerDiagnosticItemSchema(BaseModel):
+    rincon_uuid: str
+    zone_name: str
+    ip_address: str | None = None
+    connection_mode: str
+    rf_grade: str
+    link_grade: str
+    overall_grade: str
+    ofdm_ani_level: int | None = None
+    noise_floor_dbm: int | None = None
+    phy_error_rate: float | None = None
+    stp_path_cost: int | None = None
+    designated_root: str | None = None
+    is_root_healthy: bool = True
+    active_forwarding_snr_db: int | None = None
+    active_forwarding_peer: str | None = None
+    blocked_links_ignored: int = 0
+    is_ghost_group: bool = False
+    ping_rtt_ms: float | None = None
+    grading_rationale: str = ""
+
+
+class SonosPillarSummarySchema(BaseModel):
+    health_grade: str
+    player_count: int = 0
+    reachable_count: int = 0
+    designated_stp_root: str
+    is_stp_root_healthy: bool = True
+    worst_ofdm_ani_level: int | None = None
+    max_phy_error_rate: float | None = None
+    max_stp_path_cost: int | None = None
+    has_ghost_group: bool = False
+    players: list[PlayerDiagnosticItemSchema] = []
+
+
+class WiredPillarSummarySchema(BaseModel):
+    health_grade: str
+    has_vlan10_wall_jack: bool = False
+    available_ports: list[SwitchPortRead] = []
+    port_numbers: list[int] = []
+    vlan_summary: str = ""
+    stp_root_guard_required: bool = False
+    stp_root_guard_note: str = ""
+
+
+class RoomDiagnosticSummarySchema(BaseModel):
+    room_id: str
+    room_slug: str
+    room_name: str
+    floor_slug: str | None = None
+    floor_name: str | None = None
+    health_grade: str
+    active_diagnostics_count: int = 0
+    critical_count: int = 0
+    marginal_count: int = 0
+    top_diagnostic_title: str | None = None
+    wifi_pillar: WiFiPillarSummarySchema
+    sonos_pillar: SonosPillarSummarySchema
+    wired_pillar: WiredPillarSummarySchema
+    diagnostics: list[RoomDiagnosticSchema] = []
+    solution_proposals: list[SolutionProposalSchema] = []
+
+
+class HouseDiagnosticReportSchema(BaseModel):
+    evaluated_at: datetime
+    overall_health_grade: str
+    designated_stp_root: str
+    is_stp_root_healthy: bool = True
+    sonosnet_wireless_player_count: int = 0
+    total_diagnostics_count: int = 0
+    critical_diagnostics_count: int = 0
+    marginal_diagnostics_count: int = 0
+    house_diagnostics: list[RoomDiagnosticSchema] = []
+    rooms: list[RoomDiagnosticSummarySchema] = []
+
+
+HouseDiagnosticReport = HouseDiagnosticReportSchema
+
+
+class PingSweepItemSchema(BaseModel):
+    rincon_uuid: str
+    zone_name: str
+    room_slug: str | None = None
+    ip_address: str | None = None
+    is_reachable: bool = True
+    ping_rtt_ms: float
+    jitter_ms: float = 0.0
+    dpc_ducking_risk: bool = False
+
+
+class PingSweepResultSchema(BaseModel):
+    swept_at: datetime
+    total_probed: int
+    reachable_count: int
+    max_rtt_ms: float
+    avg_rtt_ms: float
+    dpc_risk_zones: list[str] = []
+    results: list[PingSweepItemSchema] = []
 
 
 

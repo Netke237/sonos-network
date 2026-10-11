@@ -7,9 +7,11 @@ import {
   createRoomSurvey,
   createSwitchPort,
   fetchHouseOverview,
+  fetchRoomDiagnostics,
   fetchRoomSurveys,
   flushGhostGroups,
   pollLiveSonosNow,
+  runPingSweep,
 } from "./api/topologyApi";
 import { TopologyGraphView } from "./components/TopologyGraphView";
 import type {
@@ -19,7 +21,9 @@ import type {
   FloorMatrixItem,
   HealthGrade,
   HouseOverview,
+  RoomDiagnosticSummary,
   RoomMatrixItem,
+  SolutionProposal,
   WiFiRoomSurvey,
 } from "./types/topology";
 
@@ -49,6 +53,9 @@ export default function App() {
   const [activeViewTab, setActiveViewTab] = useState<"MATRIX" | "GRAPH">("MATRIX");
   const [selectedRoom, setSelectedRoom] = useState<RoomMatrixItem | null>(null);
   const [roomSurveys, setRoomSurveys] = useState<WiFiRoomSurvey[]>([]);
+  const [selectedDiagnosticRoom, setSelectedDiagnosticRoom] = useState<RoomMatrixItem | null>(null);
+  const [roomDiagnostics, setRoomDiagnostics] = useState<RoomDiagnosticSummary | null>(null);
+  const [loadingDiagnostics, setLoadingDiagnostics] = useState<boolean>(false);
   const [actionBanner, setActionBanner] = useState<string | null>(null);
 
   // Room Survey Form State
@@ -163,6 +170,67 @@ export default function App() {
       await loadData(includeArchived);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to flush ghost groups");
+    }
+  };
+
+  const handleOpenRoomDiagnostics = async (room: RoomMatrixItem) => {
+    setSelectedDiagnosticRoom(room);
+    setLoadingDiagnostics(true);
+    try {
+      const diag = await fetchRoomDiagnostics(room.slug);
+      setRoomDiagnostics(diag);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load room diagnostics"
+      );
+    } finally {
+      setLoadingDiagnostics(false);
+    }
+  };
+
+  const handleExecuteProposal = async (proposal: SolutionProposal) => {
+    try {
+      if (proposal.one_click_action === "FLUSH_GHOST_GROUPS") {
+        const res = await flushGhostGroups();
+        setActionBanner(
+          `Flushed ghost groups on ${res.flushed_count} zones: ${
+            res.flushed_zones.join(", ") || "All zones clean"
+          }`
+        );
+        await loadData(includeArchived);
+        if (selectedDiagnosticRoom) {
+          const diag = await fetchRoomDiagnostics(selectedDiagnosticRoom.slug);
+          setRoomDiagnostics(diag);
+        }
+      } else if (proposal.one_click_action === "RUN_PING_JITTER_SWEEP") {
+        const res = await runPingSweep();
+        setActionBanner(
+          `Ping sweep completed for ${res.reachable_count}/${res.total_probed} players (Avg: ${res.avg_rtt_ms.toFixed(
+            1
+          )} ms, Max: ${res.max_rtt_ms.toFixed(1)} ms)`
+        );
+        await loadData(includeArchived);
+        if (selectedDiagnosticRoom) {
+          const diag = await fetchRoomDiagnostics(selectedDiagnosticRoom.slug);
+          setRoomDiagnostics(diag);
+        }
+      } else if (proposal.one_click_action === "POLL_NOW") {
+        const res = await pollLiveSonosNow();
+        setActionBanner(
+          `Polled live Sonos snapshot: ${res.reachable_players}/${res.total_players} players reachable`
+        );
+        await loadData(includeArchived);
+        if (selectedDiagnosticRoom) {
+          const diag = await fetchRoomDiagnostics(selectedDiagnosticRoom.slug);
+          setRoomDiagnostics(diag);
+        }
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to execute proposal action"
+      );
     }
   };
 
@@ -883,6 +951,23 @@ export default function App() {
                       </span>
                     </div>
 
+                    {room.top_diagnostic_title && (
+                      <div
+                        style={{
+                          backgroundColor: "#451a03",
+                          color: "#fde047",
+                          border: "1px solid #ca8a04",
+                          borderRadius: "6px",
+                          padding: "4px 8px",
+                          fontSize: "0.72rem",
+                          marginBottom: "8px",
+                          fontWeight: 500,
+                        }}
+                      >
+                        ⚠️ {room.top_diagnostic_title}
+                      </div>
+                    )}
+
                     {/* Wi-Fi RSSI & Coordinates Row */}
                     <div
                       style={{
@@ -1115,9 +1200,30 @@ export default function App() {
                       style={{
                         marginTop: "10px",
                         display: "flex",
-                        justifyContent: "flex-end",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: "8px",
                       }}
                     >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleOpenRoomDiagnostics(room);
+                        }}
+                        style={{
+                          backgroundColor: "#7c3aed",
+                          color: "#ffffff",
+                          border: "none",
+                          borderRadius: "4px",
+                          padding: "4px 8px",
+                          fontSize: "0.72rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Diagnose Room / 3-Pillar Analysis
+                      </button>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -1142,6 +1248,483 @@ export default function App() {
           </section>
         ))}
         </main>
+      )}
+
+      {/* Room 3-Pillar Diagnostic Drawer */}
+      {selectedDiagnosticRoom && (
+        <section
+          role="region"
+          aria-label="Room 3-Pillar Diagnostic Drawer"
+          style={{
+            marginTop: "24px",
+            backgroundColor: "#1e293b",
+            border: "1px solid #a855f7",
+            borderRadius: "10px",
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: "16px",
+            }}
+          >
+            <div>
+              <h3 style={{ margin: 0, fontSize: "1.2rem", color: "#f8fafc" }}>
+                Room 3-Pillar Diagnostic Drawer: {selectedDiagnosticRoom.name}
+              </h3>
+              <p
+                style={{
+                  margin: "4px 0 0",
+                  color: "#94a3b8",
+                  fontSize: "0.82rem",
+                }}
+              >
+                {selectedDiagnosticRoom.description}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedDiagnosticRoom(null);
+                setRoomDiagnostics(null);
+              }}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#94a3b8",
+                fontSize: "1rem",
+                cursor: "pointer",
+              }}
+            >
+              Close
+            </button>
+          </div>
+
+          {loadingDiagnostics && <p>Loading 3-pillar diagnostics...</p>}
+
+          {roomDiagnostics && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "20px",
+              }}
+            >
+              {/* 3 Pillars Grid */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(280px, 1fr))",
+                  gap: "16px",
+                }}
+              >
+                {/* Pillar 1 — Wi-Fi Situation */}
+                <div
+                  style={{
+                    backgroundColor: "#0f172a",
+                    borderRadius: "8px",
+                    padding: "16px",
+                    border: "1px solid #334155",
+                  }}
+                >
+                  <h4
+                    style={{
+                      margin: "0 0 10px",
+                      color: "#38bdf8",
+                      fontSize: "0.95rem",
+                    }}
+                  >
+                    Pillar 1 — Wi-Fi Situation
+                  </h4>
+                  <div
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "#cbd5e1",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "6px",
+                    }}
+                  >
+                    <div>
+                      Health Grade:{" "}
+                      <strong
+                        style={{
+                          color:
+                            GRADE_COLORS[
+                              roomDiagnostics.wifi_pillar.health_grade
+                            ]?.text ?? "#fff",
+                        }}
+                      >
+                        {roomDiagnostics.wifi_pillar.health_grade}
+                      </strong>
+                    </div>
+                    <div>
+                      5 GHz:{" "}
+                      <strong>
+                        {roomDiagnostics.wifi_pillar.best_5ghz_dbm != null
+                          ? `${roomDiagnostics.wifi_pillar.best_5ghz_dbm} dBm`
+                          : "N/A"}
+                      </strong>
+                    </div>
+                    <div>
+                      2.4 GHz:{" "}
+                      <strong>
+                        {roomDiagnostics.wifi_pillar.best_24ghz_dbm != null
+                          ? `${roomDiagnostics.wifi_pillar.best_24ghz_dbm} dBm`
+                          : "N/A"}
+                      </strong>
+                    </div>
+                    <div>
+                      Covering AP:{" "}
+                      <strong>
+                        {roomDiagnostics.wifi_pillar.covering_ap_name ?? "None"}
+                      </strong>
+                    </div>
+                    {roomDiagnostics.wifi_pillar.link_speed_mbps != null && (
+                      <div>
+                        Link Speed:{" "}
+                        <strong>
+                          {roomDiagnostics.wifi_pillar.link_speed_mbps} Mbps
+                        </strong>
+                      </div>
+                    )}
+                    <div
+                      style={{
+                        marginTop: "4px",
+                        color: "#94a3b8",
+                        fontStyle: "italic",
+                      }}
+                    >
+                      {roomDiagnostics.wifi_pillar.summary_note}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pillar 2 — Sonos Situation */}
+                <div
+                  style={{
+                    backgroundColor: "#0f172a",
+                    borderRadius: "8px",
+                    padding: "16px",
+                    border: "1px solid #334155",
+                  }}
+                >
+                  <h4
+                    style={{
+                      margin: "0 0 10px",
+                      color: "#a855f7",
+                      fontSize: "0.95rem",
+                    }}
+                  >
+                    Pillar 2 — Sonos Situation
+                  </h4>
+                  <div
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "#cbd5e1",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "6px",
+                    }}
+                  >
+                    <div>
+                      Health Grade:{" "}
+                      <strong
+                        style={{
+                          color:
+                            GRADE_COLORS[
+                              roomDiagnostics.sonos_pillar.health_grade
+                            ]?.text ?? "#fff",
+                        }}
+                      >
+                        {roomDiagnostics.sonos_pillar.health_grade}
+                      </strong>
+                    </div>
+                    <div>
+                      Players:{" "}
+                      <strong>
+                        {roomDiagnostics.sonos_pillar.total_players}
+                      </strong>
+                    </div>
+                    <div>
+                      STP Root:{" "}
+                      <strong>
+                        {roomDiagnostics.sonos_pillar.designated_stp_root}
+                      </strong>
+                    </div>
+                    <div
+                      style={{
+                        marginTop: "4px",
+                        color: "#94a3b8",
+                        fontStyle: "italic",
+                      }}
+                    >
+                      {roomDiagnostics.sonos_pillar.summary_note}
+                    </div>
+                    {roomDiagnostics.sonos_pillar.players.map((p) => (
+                      <div
+                        key={p.rincon_uuid}
+                        style={{
+                          marginTop: "8px",
+                          borderTop: "1px solid #1e293b",
+                          paddingTop: "6px",
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, color: "#f8fafc" }}>
+                          {p.zone_name} ({p.connection_mode}) · {p.overall_grade}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "0.75rem",
+                            color: "#38bdf8",
+                            marginTop: "2px",
+                          }}
+                        >
+                          {p.grading_rationale}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Pillar 3 — Wired / Switch VLAN Situation */}
+                <div
+                  style={{
+                    backgroundColor: "#0f172a",
+                    borderRadius: "8px",
+                    padding: "16px",
+                    border: "1px solid #334155",
+                  }}
+                >
+                  <h4
+                    style={{
+                      margin: "0 0 10px",
+                      color: "#10b981",
+                      fontSize: "0.95rem",
+                    }}
+                  >
+                    Pillar 3 — Wired / Switch VLAN Situation
+                  </h4>
+                  <div
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "#cbd5e1",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "6px",
+                    }}
+                  >
+                    <div>
+                      Health Grade:{" "}
+                      <strong
+                        style={{
+                          color:
+                            GRADE_COLORS[
+                              roomDiagnostics.wired_pillar.health_grade
+                            ]?.text ?? "#fff",
+                        }}
+                      >
+                        {roomDiagnostics.wired_pillar.health_grade}
+                      </strong>
+                    </div>
+                    <div>
+                      VLAN 10 Wall Jack:{" "}
+                      <strong>
+                        {roomDiagnostics.wired_pillar.has_vlan10_wall_jack
+                          ? "Available"
+                          : "None"}
+                      </strong>
+                    </div>
+                    {roomDiagnostics.wired_pillar.port_numbers.length > 0 && (
+                      <div>
+                        Ports:{" "}
+                        <strong>
+                          Port {roomDiagnostics.wired_pillar.port_numbers.join(", ")}
+                        </strong>
+                      </div>
+                    )}
+                    {roomDiagnostics.wired_pillar.stp_guard_note && (
+                      <div
+                        style={{
+                          marginTop: "6px",
+                          backgroundColor: "#3b0764",
+                          border: "1px solid #9333ea",
+                          borderRadius: "6px",
+                          padding: "8px",
+                          color: "#e9d5ff",
+                          fontSize: "0.75rem",
+                        }}
+                      >
+                        {roomDiagnostics.wired_pillar.stp_guard_note}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Active Diagnostics */}
+              {roomDiagnostics.diagnostics.length > 0 && (
+                <div>
+                  <h4
+                    style={{
+                      margin: "0 0 10px",
+                      fontSize: "0.95rem",
+                      color: "#f8fafc",
+                    }}
+                  >
+                    Active Diagnostics ({roomDiagnostics.diagnostics.length})
+                  </h4>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px",
+                    }}
+                  >
+                    {roomDiagnostics.diagnostics.map((d) => (
+                      <div
+                        key={d.id}
+                        style={{
+                          backgroundColor: "#0f172a",
+                          border: "1px solid #334155",
+                          borderRadius: "8px",
+                          padding: "12px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: "4px",
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, color: "#f8fafc" }}>
+                            {d.title}
+                          </div>
+                          <span
+                            style={{
+                              fontSize: "0.7rem",
+                              backgroundColor: "#334155",
+                              color: "#94a3b8",
+                              padding: "2px 6px",
+                              borderRadius: "4px",
+                            }}
+                          >
+                            {d.rule_code}
+                          </span>
+                        </div>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "0.78rem",
+                            color: "#cbd5e1",
+                          }}
+                        >
+                          {d.summary}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Ranked Solution Proposals */}
+              {roomDiagnostics.solution_proposals.length > 0 && (
+                <div>
+                  <h4
+                    style={{
+                      margin: "0 0 10px",
+                      fontSize: "0.95rem",
+                      color: "#f8fafc",
+                    }}
+                  >
+                    Ranked Solution Proposals
+                  </h4>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "10px",
+                    }}
+                  >
+                    {roomDiagnostics.solution_proposals.map((prop) => (
+                      <div
+                        key={prop.id}
+                        style={{
+                          backgroundColor: "#0f172a",
+                          border: "1px solid #475569",
+                          borderRadius: "8px",
+                          padding: "14px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: "6px",
+                            flexWrap: "wrap",
+                            gap: "8px",
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, color: "#38bdf8" }}>
+                            #{prop.rank} · {prop.title}
+                          </div>
+                          {prop.action_type === "ONE_CLICK" && (
+                            <button
+                              type="button"
+                              onClick={() => void handleExecuteProposal(prop)}
+                              style={{
+                                backgroundColor: "#059669",
+                                color: "#ffffff",
+                                border: "none",
+                                borderRadius: "4px",
+                                padding: "4px 10px",
+                                fontSize: "0.75rem",
+                                fontWeight: 600,
+                                cursor: "pointer",
+                              }}
+                            >
+                              Execute: {prop.title}
+                            </button>
+                          )}
+                        </div>
+                        <p
+                          style={{
+                            margin: "0 0 8px",
+                            fontSize: "0.78rem",
+                            color: "#cbd5e1",
+                          }}
+                        >
+                          {prop.description}
+                        </p>
+                        {prop.stp_guard_warning && (
+                          <div
+                            style={{
+                              backgroundColor: "#7f1d1d",
+                              border: "1px solid #ef4444",
+                              borderRadius: "6px",
+                              padding: "6px 10px",
+                              color: "#fca5a5",
+                              fontSize: "0.74rem",
+                            }}
+                          >
+                            {prop.stp_guard_warning}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       )}
 
       {/* Selected Room Wi-Fi Spectrum & Survey Drawer */}

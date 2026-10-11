@@ -19,6 +19,7 @@ from app.models.entities import (
     SwitchPort,
     WiFiRoomSurvey,
 )
+from app.modules.diagnostic_engine import DiagnosticEngine, DiagnosticEnginePort
 from app.modules.sonos_telemetry import EXPECTED_STP_ROOT
 from app.modules.topology_graph import synthesize_unified_topology_graph
 from app.modules.wifi_omada import WiFiTelemetryPort, build_wifi_room_survey
@@ -29,13 +30,16 @@ from app.schemas.topology import (
     FloorRead,
     FloorUpdate,
     GhostFlushResult,
+    HouseDiagnosticReportSchema,
     HouseOverviewDto,
     HouseholdSonosSnapshot,
     NetworkDeviceCreate,
     NetworkDeviceRead,
     NetworkDeviceUpdate,
+    PingSweepResultSchema,
     PlayerTelemetryDto,
     RoomCreate,
+    RoomDiagnosticSummarySchema,
     RoomMatrixItemDto,
     RoomRead,
     RoomUpdate,
@@ -734,16 +738,9 @@ class SqlAlchemyTopologyRepository:
         await self._session.commit()
         return built
 
-    async def get_house_overview(
-        self, include_archived: bool = False
-    ) -> HouseOverviewDto:
-        floors = await self.list_floors(include_archived=include_archived)
-        rooms = await self.list_rooms(include_archived=include_archived)
-        devices = await self.list_devices(include_archived=include_archived)
-        ports = await self.list_switch_ports(include_archived=include_archived)
-        latest_sonos = await self.get_sonos_telemetry()
-
-        # Fetch latest WiFiRoomSurvey per room (newest captured_at first)
+    async def _fetch_latest_survey_schemas_by_room(
+        self,
+    ) -> dict[str, WiFiRoomSurveySchema]:
         all_surveys_res = await self._session.execute(
             select(WiFiRoomSurvey).order_by(WiFiRoomSurvey.captured_at.desc())
         )
@@ -752,11 +749,194 @@ class SqlAlchemyTopologyRepository:
             if s.room_id not in latest_survey_by_room:
                 latest_survey_by_room[s.room_id] = s
 
+        if not latest_survey_by_room:
+            return {}
+
+        survey_ids = [s.id for s in latest_survey_by_room.values()]
+        readings_res = await self._session.execute(
+            select(BssidReading).where(BssidReading.survey_id.in_(survey_ids))
+        )
+        readings_by_survey: dict[str, list[BssidReadingSchema]] = {}
+        for br in readings_res.scalars().all():
+            readings_by_survey.setdefault(br.survey_id, []).append(
+                BssidReadingSchema(
+                    id=br.id,
+                    bssid=br.bssid,
+                    ssid=br.ssid,
+                    band=br.band,
+                    channel=br.channel,
+                    center_channel=br.center_channel,
+                    width_mhz=br.width_mhz,
+                    rssi_dbm=br.rssi_dbm,
+                    classification=br.classification,
+                    ap_device_slug=br.ap_device_slug,
+                    ap_name=br.ap_name,
+                    is_connected=br.is_connected,
+                )
+            )
+        for s_list in readings_by_survey.values():
+            s_list.sort(key=lambda item: item.rssi_dbm, reverse=True)
+
+        result: dict[str, WiFiRoomSurveySchema] = {}
+        for room_id, s in latest_survey_by_room.items():
+            result[room_id] = WiFiRoomSurveySchema(
+                id=s.id,
+                survey_slug=s.survey_slug,
+                room_id=s.room_id,
+                room_slug=s.room_slug,
+                room_name=s.room_name,
+                label=s.label,
+                trigger_mode=s.trigger_mode,
+                captured_at=s.captured_at,
+                connected_bssid=s.connected_bssid,
+                connected_ssid=s.connected_ssid,
+                link_speed_mbps=s.link_speed_mbps,
+                frequency_mhz=s.frequency_mhz,
+                best_5ghz_dbm=s.best_5ghz_dbm,
+                best_24ghz_dbm=s.best_24ghz_dbm,
+                best_ap_slug=s.best_ap_slug,
+                best_ap_name=s.best_ap_name,
+                rogue_count=s.rogue_count,
+                neighbor_count=s.neighbor_count,
+                grade_5ghz=s.grade_5ghz,
+                grade_24ghz=s.grade_24ghz,
+                wifi_health_grade=s.wifi_health_grade,
+                notes=s.notes,
+                readings=readings_by_survey.get(s.id, []),
+            )
+        return result
+
+    async def apply_ping_sweep(self, sweep_result: PingSweepResultSchema) -> None:
+        latest_stmt = (
+            select(SonosTelemetrySnapshot.batch_id)
+            .order_by(SonosTelemetrySnapshot.captured_at.desc())
+            .limit(1)
+        )
+        latest_res = await self._session.execute(latest_stmt)
+        batch_id = latest_res.scalar_one_or_none()
+        if not batch_id:
+            return
+
+        by_uuid = {r.rincon_uuid: r for r in sweep_result.results}
+        by_ip = {r.ip_address: r for r in sweep_result.results if r.ip_address}
+
+        snaps_stmt = select(SonosTelemetrySnapshot).where(
+            SonosTelemetrySnapshot.batch_id == batch_id
+        )
+        snaps_res = await self._session.execute(snaps_stmt)
+        for row in snaps_res.scalars().all():
+            item = by_uuid.get(row.rincon_uuid) or (
+                by_ip.get(row.ip_address) if row.ip_address else None
+            )
+            if item is not None:
+                row.ping_rtt_ms = item.ping_rtt_ms
+                row.is_reachable = item.is_reachable
+        await self._session.commit()
+
+    async def evaluate_house_diagnostics(
+        self,
+        diagnostic_engine: DiagnosticEnginePort | None = None,
+        include_archived: bool = False,
+    ) -> HouseDiagnosticReportSchema:
+        engine = diagnostic_engine or DiagnosticEngine()
+        floors = await self.list_floors(include_archived=include_archived)
+        rooms = await self.list_rooms(include_archived=include_archived)
+        devices = await self.list_devices(include_archived=include_archived)
+        ports = await self.list_switch_ports(include_archived=include_archived)
+        latest_sonos = await self.get_sonos_telemetry()
+        latest_surveys = await self._fetch_latest_survey_schemas_by_room()
+
+        telem_by_uuid: dict[str, PlayerTelemetryDto] = {}
+        if latest_sonos:
+            telem_by_uuid = {p.rincon_uuid: p for p in latest_sonos.players}
+
+        players_by_room: dict[str, list[PlayerTelemetryDto]] = {}
+        for d in devices:
+            if d.device_role != DeviceRole.SONOS_PLAYER.value or not d.room_id:
+                continue
+            if d.rincon_uuid and d.rincon_uuid in telem_by_uuid:
+                p_dto = telem_by_uuid[d.rincon_uuid].model_copy(
+                    update={"connection_mode": d.connection_mode}
+                )
+            else:
+                p_dto = PlayerTelemetryDto(
+                    rincon_uuid=d.rincon_uuid or d.slug,
+                    zone_name=d.name,
+                    ip_address=d.ip_address,
+                    base_mac=d.mac_address,
+                    bssid=d.bssid,
+                    connection_mode=d.connection_mode,
+                )
+            players_by_room.setdefault(d.room_id, []).append(p_dto)
+
+        ports_by_room: dict[str | None, list[SwitchPortRead]] = {}
+        for p in ports:
+            ports_by_room.setdefault(p.patched_room_id, []).append(
+                SwitchPortRead.model_validate(p)
+            )
+
+        floors_by_id = {f.id: (f.slug, f.name) for f in floors}
+        rooms_context = []
+        for r in rooms:
+            f_slug, f_name = floors_by_id.get(r.floor_id, (None, None))
+            rooms_context.append(
+                {
+                    "room_id": r.id,
+                    "room_slug": r.slug,
+                    "room_name": r.name,
+                    "floor_slug": f_slug,
+                    "floor_name": f_name,
+                    "survey": latest_surveys.get(r.id),
+                    "players": players_by_room.get(r.id, []),
+                    "switch_ports": ports_by_room.get(r.id, []),
+                    "fallback_5ghz_dbm": r.best_5ghz_rssi_dbm,
+                    "fallback_24ghz_dbm": r.best_24ghz_rssi_dbm,
+                }
+            )
+
+        return engine.evaluate_house(
+            rooms_context=rooms_context,
+            mesh_links=latest_sonos.mesh_links if latest_sonos else [],
+            designated_stp_root=(
+                latest_sonos.designated_stp_root if latest_sonos else None
+            ),
+        )
+
+    async def evaluate_room_diagnostics(
+        self,
+        room_ref: str,
+        diagnostic_engine: DiagnosticEnginePort | None = None,
+    ) -> RoomDiagnosticSummarySchema | None:
+        room = await self.get_room_by_slug_or_id(room_ref)
+        if not room:
+            return None
+        house_report = await self.evaluate_house_diagnostics(
+            diagnostic_engine=diagnostic_engine,
+            include_archived=room.is_archived,
+        )
+        for r_summary in house_report.rooms:
+            if r_summary.room_id == room.id or r_summary.room_slug == room.slug:
+                return r_summary
+        return None
+
+    async def get_house_overview(
+        self,
+        include_archived: bool = False,
+        diagnostic_engine: DiagnosticEnginePort | None = None,
+    ) -> HouseOverviewDto:
+        floors = await self.list_floors(include_archived=include_archived)
+        rooms = await self.list_rooms(include_archived=include_archived)
+        devices = await self.list_devices(include_archived=include_archived)
+        ports = await self.list_switch_ports(include_archived=include_archived)
+        latest_sonos = await self.get_sonos_telemetry()
+        latest_survey_by_room = await self._fetch_latest_survey_schemas_by_room()
+
         telem_by_uuid: dict[str, PlayerTelemetryDto] = {}
         if latest_sonos:
             telem_by_uuid = {p.rincon_uuid: p for p in latest_sonos.players}
 
         devices_by_room: dict[str | None, list[NetworkDeviceRead]] = {}
+        players_by_room: dict[str, list[PlayerTelemetryDto]] = {}
         for d in devices:
             dev_dto = NetworkDeviceRead.model_validate(d)
             if d.rincon_uuid and d.rincon_uuid in telem_by_uuid:
@@ -778,15 +958,61 @@ class SqlAlchemyTopologyRepository:
                     dev_dto.ip_address = t.ip_address
             devices_by_room.setdefault(d.room_id, []).append(dev_dto)
 
+            if d.device_role == DeviceRole.SONOS_PLAYER.value and d.room_id:
+                if d.rincon_uuid and d.rincon_uuid in telem_by_uuid:
+                    p_dto = telem_by_uuid[d.rincon_uuid].model_copy(
+                        update={"connection_mode": d.connection_mode}
+                    )
+                else:
+                    p_dto = PlayerTelemetryDto(
+                        rincon_uuid=d.rincon_uuid or d.slug,
+                        zone_name=d.name,
+                        ip_address=d.ip_address,
+                        base_mac=d.mac_address,
+                        bssid=d.bssid,
+                        connection_mode=d.connection_mode,
+                    )
+                players_by_room.setdefault(d.room_id, []).append(p_dto)
+
         ports_by_room: dict[str | None, list[SwitchPortRead]] = {}
         for p in ports:
             ports_by_room.setdefault(p.patched_room_id, []).append(
                 SwitchPortRead.model_validate(p)
             )
 
+        engine = diagnostic_engine or DiagnosticEngine()
+        floors_by_id = {f.id: (f.slug, f.name) for f in floors}
+        rooms_context = []
+        for r in rooms:
+            f_slug, f_name = floors_by_id.get(r.floor_id, (None, None))
+            rooms_context.append(
+                {
+                    "room_id": r.id,
+                    "room_slug": r.slug,
+                    "room_name": r.name,
+                    "floor_slug": f_slug,
+                    "floor_name": f_name,
+                    "survey": latest_survey_by_room.get(r.id),
+                    "players": players_by_room.get(r.id, []),
+                    "switch_ports": ports_by_room.get(r.id, []),
+                    "fallback_5ghz_dbm": r.best_5ghz_rssi_dbm,
+                    "fallback_24ghz_dbm": r.best_24ghz_rssi_dbm,
+                }
+            )
+
+        house_diag = engine.evaluate_house(
+            rooms_context=rooms_context,
+            mesh_links=latest_sonos.mesh_links if latest_sonos else [],
+            designated_stp_root=(
+                latest_sonos.designated_stp_root if latest_sonos else None
+            ),
+        )
+        diag_by_room_id = {rs.room_id: rs for rs in house_diag.rooms}
+
         rooms_by_floor: dict[str, list[RoomMatrixItemDto]] = {}
         for r in rooms:
             latest_s = latest_survey_by_room.get(r.id)
+            room_diag = diag_by_room_id.get(r.id)
             best_5g = (
                 latest_s.best_5ghz_dbm
                 if latest_s and latest_s.best_5ghz_dbm is not None
@@ -800,6 +1026,8 @@ class SqlAlchemyTopologyRepository:
             base_room_dict = RoomRead.model_validate(r).model_dump()
             base_room_dict["best_5ghz_rssi_dbm"] = best_5g
             base_room_dict["best_24ghz_rssi_dbm"] = best_24g
+            if room_diag is not None:
+                base_room_dict["health_grade"] = room_diag.health_grade
 
             room_dto = RoomMatrixItemDto(
                 **base_room_dict,
@@ -811,6 +1039,18 @@ class SqlAlchemyTopologyRepository:
                 neighbor_count=latest_s.neighbor_count if latest_s else 0,
                 wifi_health_grade=(
                     latest_s.wifi_health_grade if latest_s else r.health_grade
+                ),
+                sonos_health_grade=(
+                    room_diag.sonos_pillar.health_grade if room_diag else "EXCELLENT"
+                ),
+                wired_health_grade=(
+                    room_diag.wired_pillar.health_grade if room_diag else "GOOD"
+                ),
+                active_diagnostics_count=(
+                    room_diag.active_diagnostics_count if room_diag else 0
+                ),
+                top_diagnostic_title=(
+                    room_diag.top_diagnostic_title if room_diag else None
                 ),
                 devices=devices_by_room.get(r.id, []),
                 switch_ports=ports_by_room.get(r.id, []),
@@ -847,6 +1087,8 @@ class SqlAlchemyTopologyRepository:
             ghost_group_count=latest_sonos.ghost_group_count if latest_sonos else 0,
             has_ghost_groups=latest_sonos.has_ghost_groups if latest_sonos else False,
             ghost_group_zones=latest_sonos.ghost_group_zones if latest_sonos else [],
+            active_diagnostics_count=house_diag.total_diagnostics_count,
+            critical_diagnostics_count=house_diag.critical_diagnostics_count,
             latest_sonos_batch_id=latest_sonos.batch_id if latest_sonos else None,
             latest_sonos_captured_at=latest_sonos.captured_at if latest_sonos else None,
             floors=floor_dtos,
@@ -868,6 +1110,7 @@ class SqlAlchemyTopologyRepository:
             room_slug=room_slug,
             include_blocking=include_blocking,
         )
+
 
 
 

@@ -9,6 +9,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import Base, build_engine_and_sessionmaker
+from app.modules.diagnostic_engine import (
+    DiagnosticEngine,
+    DiagnosticEnginePort,
+    FakeNetworkProbeAdapter,
+    HttpNetworkProbeAdapter,
+    NetworkProbePort,
+)
 from app.modules.sonos_telemetry import (
     FakeSonosAdapter,
     HttpSonosAdapter,
@@ -26,12 +33,15 @@ from app.schemas.topology import (
     FloorUpdate,
     GhostFlushRequest,
     GhostFlushResult,
+    HouseDiagnosticReportSchema,
     HouseOverviewDto,
     HouseholdSonosSnapshot,
     NetworkDeviceCreate,
     NetworkDeviceRead,
     NetworkDeviceUpdate,
+    PingSweepResultSchema,
     RoomCreate,
+    RoomDiagnosticSummarySchema,
     RoomRead,
     RoomUpdate,
     SwitchPortCreate,
@@ -49,6 +59,8 @@ def create_app(
     database_url: str | None = None,
     sonos_adapter: SonosTelemetryPort | None = None,
     wifi_adapter: WiFiTelemetryPort | None = None,
+    probe_adapter: NetworkProbePort | None = None,
+    diagnostic_engine: DiagnosticEnginePort | None = None,
 ) -> FastAPI:
     engine, session_factory = build_engine_and_sessionmaker(database_url)
     default_adapter: SonosTelemetryPort = sonos_adapter or (
@@ -61,6 +73,14 @@ def create_app(
         if os.getenv("OMADA_USE_LIVE_HTTP") == "1"
         else FakeWiFiAdapter()
     )
+    default_probe_adapter: NetworkProbePort = probe_adapter or (
+        HttpNetworkProbeAdapter()
+        if os.getenv("SONOS_USE_LIVE_HTTP") == "1"
+        else FakeNetworkProbeAdapter()
+    )
+    default_diagnostic_engine: DiagnosticEnginePort = (
+        diagnostic_engine or DiagnosticEngine()
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -68,6 +88,8 @@ def create_app(
         app.state.session_factory = session_factory
         app.state.sonos_adapter = default_adapter
         app.state.wifi_adapter = default_wifi_adapter
+        app.state.probe_adapter = default_probe_adapter
+        app.state.diagnostic_engine = default_diagnostic_engine
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         async with session_factory() as session:
@@ -86,6 +108,8 @@ def create_app(
     app.state.session_factory = session_factory
     app.state.sonos_adapter = default_adapter
     app.state.wifi_adapter = default_wifi_adapter
+    app.state.probe_adapter = default_probe_adapter
+    app.state.diagnostic_engine = default_diagnostic_engine
 
     app.add_middleware(
         CORSMiddleware,
@@ -111,6 +135,12 @@ def create_app(
     def get_wifi_adapter(request: Request) -> WiFiTelemetryPort:
         return request.app.state.wifi_adapter
 
+    def get_probe_adapter(request: Request) -> NetworkProbePort:
+        return request.app.state.probe_adapter
+
+    def get_diagnostic_engine(request: Request) -> DiagnosticEnginePort:
+        return request.app.state.diagnostic_engine
+
 
     @app.get("/api/health")
     async def health_check() -> dict[str, str]:
@@ -120,8 +150,12 @@ def create_app(
     async def get_overview(
         include_archived: bool = Query(False),
         repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+        diag_engine: DiagnosticEnginePort = Depends(get_diagnostic_engine),
     ) -> HouseOverviewDto:
-        return await repo.get_house_overview(include_archived=include_archived)
+        return await repo.get_house_overview(
+            include_archived=include_archived,
+            diagnostic_engine=diag_engine,
+        )
 
     @app.get("/api/topology", response_model=TopologyGraphResponse)
     async def get_topology_graph(
@@ -391,9 +425,53 @@ def create_app(
             raise HTTPException(status_code=404, detail="Room not found")
         return survey
 
+    # --- Deterministic Diagnostics & Ping/Jitter Sweep ---
+    @app.get("/api/diagnostics", response_model=HouseDiagnosticReportSchema)
+    async def get_house_diagnostics(
+        include_archived: bool = Query(False),
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+        diag_engine: DiagnosticEnginePort = Depends(get_diagnostic_engine),
+    ) -> HouseDiagnosticReportSchema:
+        return await repo.evaluate_house_diagnostics(
+            diagnostic_engine=diag_engine,
+            include_archived=include_archived,
+        )
+
+    @app.get(
+        "/api/rooms/{room_slug}/diagnostics",
+        response_model=RoomDiagnosticSummarySchema,
+    )
+    async def get_room_diagnostics(
+        room_slug: str,
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+        diag_engine: DiagnosticEnginePort = Depends(get_diagnostic_engine),
+    ) -> RoomDiagnosticSummarySchema:
+        summary = await repo.evaluate_room_diagnostics(
+            room_slug,
+            diagnostic_engine=diag_engine,
+        )
+        if summary is None:
+            raise HTTPException(status_code=404, detail="Room not found")
+        return summary
+
+    @app.post("/api/actions/ping-sweep", response_model=PingSweepResultSchema)
+    async def run_ping_sweep_action(
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+        adapter: SonosTelemetryPort = Depends(get_sonos_adapter),
+        probe_adapter: NetworkProbePort = Depends(get_probe_adapter),
+    ) -> PingSweepResultSchema:
+        snap = await repo.get_sonos_telemetry()
+        if snap is None:
+            collected = await adapter.collect_household_snapshot(consumer_id="on-demand")
+            snap = await repo.save_sonos_snapshot(collected)
+        result = await probe_adapter.run_ping_sweep(players=snap.players)
+        await repo.apply_ping_sweep(result)
+        return result
+
     return app
 
 
 
 app = create_app()
+
 
