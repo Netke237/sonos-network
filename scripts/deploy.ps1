@@ -27,7 +27,7 @@ if ($existingDb) {
 }
 
 # 3. Build and spin up the Docker Compose stack
-Write-Host "`n[STEP 1] Starting Docker Compose stack (db:5434, backend:8000, frontend:3000)..." -ForegroundColor Cyan
+Write-Host "`n[STEP 1] Starting Docker Compose stack (db:5434, backend:8001, frontend:3000)..." -ForegroundColor Cyan
 docker compose up -d --build
 if ($LASTEXITCODE -ne 0) {
     Write-Error "docker compose up failed with exit code $LASTEXITCODE."
@@ -52,12 +52,12 @@ if (-not $dbHealthy) {
 }
 
 # 5. Wait for backend health endpoint
-Write-Host "`n[STEP 3] Verifying Backend Health (http://localhost:8000/api/health)..." -ForegroundColor Cyan
+Write-Host "`n[STEP 3] Verifying Backend Health (http://localhost:8001/api/health)..." -ForegroundColor Cyan
 $maxBackendRetries = 25
 $backendOk = $false
 for ($i = 1; $i -le $maxBackendRetries; $i++) {
     try {
-        $resp = Invoke-RestMethod -Uri "http://localhost:8000/api/health" -TimeoutSec 3 -ErrorAction Stop
+        $resp = Invoke-RestMethod -Uri "http://localhost:8001/api/health" -TimeoutSec 3 -ErrorAction Stop
         if ($resp.status -eq "ok") {
             $backendOk = $true
             Write-Host "[OK] Backend responded with status=ok." -ForegroundColor Green
@@ -68,14 +68,14 @@ for ($i = 1; $i -le $maxBackendRetries; $i++) {
     }
 }
 if (-not $backendOk) {
-    Write-Error "Backend failed to respond on http://localhost:8000/api/health after $maxBackendRetries attempts."
+    Write-Error "Backend failed to respond on http://localhost:8001/api/health after $maxBackendRetries attempts."
     exit 1
 }
 
 # 6. Verify 24/7 background telemetry daemon
-Write-Host "`n[STEP 4] Verifying 24/7 Telemetry Daemon (http://localhost:8000/api/daemon/status)..." -ForegroundColor Cyan
+Write-Host "`n[STEP 4] Verifying 24/7 Telemetry Daemon (http://localhost:8001/api/daemon/status)..." -ForegroundColor Cyan
 try {
-    $daemon = Invoke-RestMethod -Uri "http://localhost:8000/api/daemon/status" -TimeoutSec 3
+    $daemon = Invoke-RestMethod -Uri "http://localhost:8001/api/daemon/status" -TimeoutSec 3
     Write-Host "[OK] Telemetry Daemon is running: $($daemon.is_running) (interval: $($daemon.interval_sec)s, retention: $($daemon.retention_days)d)" -ForegroundColor Green
 } catch {
     Write-Warning "Could not verify daemon status: $_"
@@ -95,6 +95,6 @@ try {
 Write-Host "`n==========================================================" -ForegroundColor Green
 Write-Host "Deployment Verified Successfully!" -ForegroundColor Green
 Write-Host "Database: 192.168.55.60:5434 (PostgreSQL 15)" -ForegroundColor Green
-Write-Host "Backend:  http://192.168.55.60:8000 / http://localhost:8000" -ForegroundColor Green
+Write-Host "Backend:  http://192.168.55.60:8001 / http://localhost:8001" -ForegroundColor Green
 Write-Host "Frontend: http://192.168.55.60:3000 / http://localhost:3000" -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Green

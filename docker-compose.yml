@@ -35,7 +35,7 @@ services:
       ENABLE_TELEMETRY_DAEMON: ${ENABLE_TELEMETRY_DAEMON:-1}
       SONOS_USE_LIVE_HTTP: ${SONOS_USE_LIVE_HTTP:-1}
     ports:
-      - "8000:8000"
+      - "8001:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -48,7 +48,7 @@ services:
     depends_on:
       - sonos-network-backend
     environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://192.168.55.60:8000}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://192.168.55.60:8001}
     ports:
       - "3000:3000"
 
