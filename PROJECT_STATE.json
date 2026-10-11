@@ -1,7 +1,7 @@
 {
   "project": "sonos-network",
   "repo": "Netke237/sonos-network",
-  "active_phase": null,
+  "active_phase": "PHASE-1.5-UX-REDESIGN",
   "audit_rule": {
     "max_rounds_per_stage": 3,
     "gate_criteria": [
@@ -67,6 +67,16 @@
           "outstanding": []
         }
       ]
+    },
+    {
+      "id": "PHASE-1.5-UX-REDESIGN",
+      "title": "Intuitive Topology Graph, Keller Cross-Floor Anchors & Live Waveform Oscilloscope",
+      "status": "in_progress",
+      "plan_audit_rounds": 0,
+      "plan_audit_clean": true,
+      "code_audit_rounds": 0,
+      "audit_clean": false,
+      "rounds": []
     }
   ],
   "task_backlog": {
