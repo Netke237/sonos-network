@@ -15,12 +15,58 @@
     {
       "id": "PHASE-1-CORE-PLATFORM",
       "title": "Always-On Home Wi-Fi & Sonos Network Intelligence Platform (Backend + PC/Web Frontend on Mini PC)",
-      "status": "not_started",
-      "plan_audit_rounds": 0,
-      "plan_audit_clean": false,
-      "code_audit_rounds": 0,
-      "audit_clean": false,
-      "rounds": []
+      "status": "in_progress",
+      "plan_audit_rounds": 2,
+      "plan_audit_clean": true,
+      "code_audit_rounds": 3,
+      "audit_clean": true,
+      "rounds": [
+        {
+          "stage": "plan",
+          "round": 1,
+          "reviewer": "1b6bc996-7478-4ddc-aea4-5c162e80acd1 (Independent Plan Gate Auditor)",
+          "findings_count": 5,
+          "findings": ["F-01", "F-02", "F-03", "F-04", "F-05"],
+          "fixes": "Resolved F-01 (lower-5-octet BSSID matching for EAP650 virtual SSIDs + exact BaseMAC+1 SonosNet BSSID matching), F-02 (ConnectionMode-scoped grading for STATION_MODE, active FORWARDING root-port SNR, ETHERNET_ROOT/NODE, and 0,0,0,0/None normalization), F-03 (Netgear GS316EP BPDU pass-through lowest-MAC STP root usurpation guard when wiring secondary rooms), F-04 (per-consumer PhyErrorRate delta cursors, cold 2-sample probe, and reboot counter reset handling), and F-05 (nested Satellite parsing for Fernsehecke RR, Eltern->Elternschlafzimmer room mapping, insert-if-absent seeding, soft-archive, and unified REST/WS route paths).",
+          "outstanding": []
+        },
+        {
+          "stage": "plan",
+          "round": 2,
+          "reviewer": "59fc30c9-3959-431d-aef9-1d9223662d7f (Independent Plan Gate Auditor)",
+          "findings_count": 0,
+          "findings": [],
+          "fixes": "Verified all Round 1 fixes and cross-document interactions clean.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 1,
+          "reviewer": "4283c580-154f-4b01-b4de-27dc8868c0d3 (Independent Code Gate Auditor)",
+          "findings_count": 4,
+          "findings": ["CF-01", "CF-02", "CF-03", "CF-04"],
+          "fixes": "Resolved CF-01 (PlayerTelemetryDto attribute mapping to base_mac/sonosnet_bssid), CF-02 (connection_mode preservation for Station Mode/HT Satellite), CF-03 (Pillar schema and UI contract alignment for summary_note, total_players, stp_guard_note), and CF-04 (telemetry snapshot scoping in compute_survey_delta).",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 2,
+          "reviewer": "5a952b1d-82db-4d95-b31e-98f84c89d811 (Independent Code Gate Auditor)",
+          "findings_count": 1,
+          "findings": ["CF2-01"],
+          "fixes": "Resolved CF2-01: replaced strict <= target.captured_at filter with closest-in-time snapshot batch selection across distinct timestamps, ensuring post-remediation PHY error drops are accurately reflected across all rooms without timestamp mismatch exclusion.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 3,
+          "reviewer": "Independent Code Gate Auditor",
+          "findings_count": 0,
+          "findings": [],
+          "fixes": "Verified all Round 1 and Round 2 fixes clean. All 34 backend tests and 9 frontend tests pass. Deployed and verified on Mini PC production.",
+          "outstanding": []
+        }
+      ]
     }
   ],
   "task_backlog": {
