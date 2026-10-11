@@ -24,6 +24,7 @@ from app.modules.sonos_telemetry import EXPECTED_STP_ROOT
 from app.modules.topology_graph import synthesize_unified_topology_graph
 from app.modules.wifi_omada import WiFiTelemetryPort, build_wifi_room_survey
 from app.schemas.topology import (
+    BssidDeltaItemSchema,
     BssidReadingSchema,
     FloorCreate,
     FloorMatrixItemDto,
@@ -44,6 +45,7 @@ from app.schemas.topology import (
     RoomRead,
     RoomUpdate,
     SonosMeshLinkDto,
+    SurveyComparisonDeltaSchema,
     SwitchPortCreate,
     SwitchPortRead,
     SwitchPortUpdate,
@@ -737,6 +739,220 @@ class SqlAlchemyTopologyRepository:
 
         await self._session.commit()
         return built
+
+    async def compute_survey_delta(
+        self,
+        room_ref: str,
+        baseline_slug: str | None = None,
+        target_slug: str | None = None,
+    ) -> SurveyComparisonDeltaSchema | None:
+        room = await self.get_room_by_slug_or_id(room_ref)
+        if not room:
+            return None
+
+        surveys_res = await self._session.execute(
+            select(WiFiRoomSurvey)
+            .where(WiFiRoomSurvey.room_id == room.id)
+            .order_by(WiFiRoomSurvey.captured_at.asc())
+        )
+        all_surveys = list(surveys_res.scalars().all())
+        if not all_surveys:
+            return None
+
+        baseline: WiFiRoomSurvey | None = None
+        target: WiFiRoomSurvey | None = None
+
+        if baseline_slug:
+            baseline = next(
+                (s for s in all_surveys if s.survey_slug == baseline_slug or s.id == baseline_slug),
+                None,
+            )
+        if target_slug:
+            target = next(
+                (s for s in all_surveys if s.survey_slug == target_slug or s.id == target_slug),
+                None,
+            )
+
+        if not baseline and not target:
+            baseline = all_surveys[0]
+            target = all_surveys[-1]
+        elif not baseline and target:
+            baseline = next((s for s in all_surveys if s.id != target.id), target)
+        elif not target and baseline:
+            candidates = [s for s in all_surveys if s.id != baseline.id]
+            target = candidates[-1] if candidates else baseline
+
+        if not baseline or not target:
+            return None
+
+        readings_res = await self._session.execute(
+            select(BssidReading).where(BssidReading.survey_id.in_([baseline.id, target.id]))
+        )
+        all_readings = list(readings_res.scalars().all())
+        base_readings = {r.bssid: r for r in all_readings if r.survey_id == baseline.id}
+        target_readings = {r.bssid: r for r in all_readings if r.survey_id == target.id}
+
+        all_bssids = list(dict.fromkeys(list(base_readings.keys()) + list(target_readings.keys())))
+        bssid_deltas: list[BssidDeltaItemSchema] = []
+        for bssid in all_bssids:
+            b_item = base_readings.get(bssid)
+            t_item = target_readings.get(bssid)
+            ref_item = t_item or b_item
+            if not ref_item:
+                continue
+            b_rssi = b_item.rssi_dbm if b_item else None
+            t_rssi = t_item.rssi_dbm if t_item else None
+            delta_rssi = (t_rssi - b_rssi) if (t_rssi is not None and b_rssi is not None) else None
+
+            bssid_deltas.append(
+                BssidDeltaItemSchema(
+                    bssid=bssid,
+                    ssid=ref_item.ssid,
+                    band=ref_item.band,
+                    channel=ref_item.channel,
+                    classification=ref_item.classification,
+                    baseline_rssi_dbm=b_rssi,
+                    target_rssi_dbm=t_rssi,
+                    delta_rssi_dbm=delta_rssi,
+                    is_new=(b_item is None),
+                    is_vanished=(t_item is None),
+                )
+            )
+
+        d_5g = (target.best_5ghz_dbm - baseline.best_5ghz_dbm) if (target.best_5ghz_dbm is not None and baseline.best_5ghz_dbm is not None) else None
+        d_24g = (target.best_24ghz_dbm - baseline.best_24ghz_dbm) if (target.best_24ghz_dbm is not None and baseline.best_24ghz_dbm is not None) else None
+        d_speed = (target.link_speed_mbps - baseline.link_speed_mbps) if (target.link_speed_mbps is not None and baseline.link_speed_mbps is not None) else None
+
+        grade_ranks = {"EXCELLENT": 4, "GOOD": 3, "MARGINAL": 2, "CRITICAL": 1}
+        t_grade_val = grade_ranks.get(target.wifi_health_grade, 0)
+        b_grade_val = grade_ranks.get(baseline.wifi_health_grade, 0)
+        wifi_improved = (d_5g is not None and d_5g > 0) or (t_grade_val > b_grade_val)
+
+        base_sonos_res = await self._session.execute(
+            select(SonosTelemetrySnapshot)
+            .where(SonosTelemetrySnapshot.room_id == room.id)
+            .order_by(SonosTelemetrySnapshot.captured_at.asc())
+        )
+        base_sonos = list(base_sonos_res.scalars().all())
+
+        base_ani = None
+        target_ani = None
+        base_phy = None
+        target_phy = None
+        base_cost = None
+        target_cost = None
+        base_ping = None
+        target_ping = None
+
+        if base_sonos:
+            dev_res = await self._session.execute(
+                select(NetworkDevice).where(
+                    NetworkDevice.room_id == room.id,
+                    NetworkDevice.device_role == DeviceRole.SONOS_PLAYER,
+                )
+            )
+            room_devs = list(dev_res.scalars().all())
+            num_devs = len(room_devs) or 1
+            first_snaps = base_sonos[:num_devs]
+            last_snaps = base_sonos[-num_devs:]
+
+            valid_first_ani = [s.ofdm_ani_level for s in first_snaps if s.ofdm_ani_level is not None]
+            if valid_first_ani:
+                base_ani = max(valid_first_ani)
+            valid_last_ani = [s.ofdm_ani_level for s in last_snaps if s.ofdm_ani_level is not None]
+            if valid_last_ani:
+                target_ani = max(valid_last_ani)
+
+            valid_first_phy = [s.phy_error_rate for s in first_snaps if s.phy_error_rate is not None]
+            if valid_first_phy:
+                base_phy = max(valid_first_phy)
+            valid_last_phy = [s.phy_error_rate for s in last_snaps if s.phy_error_rate is not None]
+            if valid_last_phy:
+                target_phy = max(valid_last_phy)
+
+            valid_first_cost = [s.stp_path_cost for s in first_snaps if s.stp_path_cost is not None]
+            if valid_first_cost:
+                base_cost = max(valid_first_cost)
+            valid_last_cost = [s.stp_path_cost for s in last_snaps if s.stp_path_cost is not None]
+            if valid_last_cost:
+                target_cost = max(valid_last_cost)
+
+            valid_first_ping = [s.ping_rtt_ms for s in first_snaps if s.ping_rtt_ms is not None]
+            if valid_first_ping:
+                base_ping = sum(valid_first_ping) / len(valid_first_ping)
+            valid_last_ping = [s.ping_rtt_ms for s in last_snaps if s.ping_rtt_ms is not None]
+            if valid_last_ping:
+                target_ping = sum(valid_last_ping) / len(valid_last_ping)
+
+        delta_ani = (target_ani - base_ani) if (target_ani is not None and base_ani is not None) else None
+        delta_phy = (target_phy - base_phy) if (target_phy is not None and base_phy is not None) else None
+        delta_cost = (target_cost - base_cost) if (target_cost is not None and base_cost is not None) else None
+        delta_ping = (target_ping - base_ping) if (target_ping is not None and base_ping is not None) else None
+
+        sonos_improved = False
+        if delta_phy is not None and delta_phy < 0:
+            sonos_improved = True
+        elif delta_ani is not None and delta_ani < 0:
+            sonos_improved = True
+
+        overall_improved = wifi_improved or sonos_improved
+
+        narrative_parts = []
+        if d_5g is not None:
+            narrative_parts.append(
+                f"5 GHz signal shifted by {d_5g:+} dBm ({baseline.best_5ghz_dbm} -> {target.best_5ghz_dbm} dBm via {target.best_ap_name or 'managed AP'})."
+            )
+        if delta_phy is not None and abs(delta_phy) > 0:
+            narrative_parts.append(
+                f"Sonos PHY error rate shifted by {delta_phy:+.1f} err/s."
+            )
+        if not narrative_parts:
+            narrative_parts.append(f"Survey comparison between {baseline.label} and {target.label}.")
+        summary_narrative = " ".join(narrative_parts)
+
+        return SurveyComparisonDeltaSchema(
+            room_id=room.id,
+            room_slug=room.slug,
+            room_name=room.name,
+            baseline_survey_id=baseline.id,
+            baseline_survey_slug=baseline.survey_slug,
+            baseline_label=baseline.label,
+            baseline_captured_at=baseline.captured_at,
+            target_survey_id=target.id,
+            target_survey_slug=target.survey_slug,
+            target_label=target.label,
+            target_captured_at=target.captured_at,
+            baseline_5ghz_dbm=baseline.best_5ghz_dbm,
+            target_5ghz_dbm=target.best_5ghz_dbm,
+            delta_5ghz_dbm=d_5g,
+            baseline_24ghz_dbm=baseline.best_24ghz_dbm,
+            target_24ghz_dbm=target.best_24ghz_dbm,
+            delta_24ghz_dbm=d_24g,
+            baseline_link_speed_mbps=baseline.link_speed_mbps,
+            target_link_speed_mbps=target.link_speed_mbps,
+            delta_link_speed_mbps=d_speed,
+            baseline_best_ap_name=baseline.best_ap_name,
+            target_best_ap_name=target.best_ap_name,
+            baseline_wifi_health_grade=baseline.wifi_health_grade,
+            target_wifi_health_grade=target.wifi_health_grade,
+            wifi_improved=wifi_improved,
+            baseline_ofdm_ani_level=base_ani,
+            target_ofdm_ani_level=target_ani,
+            delta_ofdm_ani_level=delta_ani,
+            baseline_phy_error_rate=base_phy,
+            target_phy_error_rate=target_phy,
+            delta_phy_error_rate=delta_phy,
+            baseline_stp_path_cost=base_cost,
+            target_stp_path_cost=target_cost,
+            delta_stp_path_cost=delta_cost,
+            baseline_ping_rtt_ms=base_ping,
+            target_ping_rtt_ms=target_ping,
+            delta_ping_rtt_ms=delta_ping,
+            sonos_improved=sonos_improved,
+            overall_improved=overall_improved,
+            summary_narrative=summary_narrative,
+            bssid_deltas=bssid_deltas,
+        )
 
     async def _fetch_latest_survey_schemas_by_room(
         self,

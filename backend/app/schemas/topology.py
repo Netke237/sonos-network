@@ -672,4 +672,64 @@ class PingSweepResultSchema(BaseModel):
     results: list[PingSweepItemSchema] = []
 
 
+class BssidDeltaItemSchema(BaseModel):
+    bssid: str
+    ssid: str | None = None
+    band: str
+    channel: int
+    classification: str
+    baseline_rssi_dbm: int | None = None
+    target_rssi_dbm: int | None = None
+    delta_rssi_dbm: int | None = None
+    is_new: bool = False
+    is_vanished: bool = False
+
+
+class SurveyComparisonDeltaSchema(BaseModel):
+    room_id: str
+    room_slug: str
+    room_name: str
+    baseline_survey_id: str
+    baseline_survey_slug: str
+    baseline_label: str
+    baseline_captured_at: datetime
+    target_survey_id: str
+    target_survey_slug: str
+    target_label: str
+    target_captured_at: datetime
+    # Wi-Fi Deltas
+    baseline_5ghz_dbm: int | None = None
+    target_5ghz_dbm: int | None = None
+    delta_5ghz_dbm: int | None = None
+    baseline_24ghz_dbm: int | None = None
+    target_24ghz_dbm: int | None = None
+    delta_24ghz_dbm: int | None = None
+    baseline_link_speed_mbps: int | None = None
+    target_link_speed_mbps: int | None = None
+    delta_link_speed_mbps: int | None = None
+    baseline_best_ap_name: str | None = None
+    target_best_ap_name: str | None = None
+    baseline_wifi_health_grade: str
+    target_wifi_health_grade: str
+    wifi_improved: bool = False
+    # Sonos Deltas
+    baseline_ofdm_ani_level: int | None = None
+    target_ofdm_ani_level: int | None = None
+    delta_ofdm_ani_level: int | None = None
+    baseline_phy_error_rate: float | None = None
+    target_phy_error_rate: float | None = None
+    delta_phy_error_rate: float | None = None
+    baseline_stp_path_cost: int | None = None
+    target_stp_path_cost: int | None = None
+    delta_stp_path_cost: int | None = None
+    baseline_ping_rtt_ms: float | None = None
+    target_ping_rtt_ms: float | None = None
+    delta_ping_rtt_ms: float | None = None
+    sonos_improved: bool = False
+    # Summary
+    overall_improved: bool = False
+    summary_narrative: str = ""
+    bssid_deltas: list[BssidDeltaItemSchema] = []
+
+
 

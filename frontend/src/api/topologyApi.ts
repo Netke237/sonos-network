@@ -10,6 +10,7 @@ import type {
   PingSweepResult,
   Room,
   RoomDiagnosticSummary,
+  SurveyComparisonDelta,
   SwitchPort,
   TopologyGraphResponse,
   WiFiRoomSurvey,
@@ -245,6 +246,24 @@ export async function runPingSweep(): Promise<PingSweepResult> {
   });
   if (!resp.ok) {
     throw new Error(`Failed to run ping sweep: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function fetchSurveyDelta(
+  roomSlug: string,
+  baselineSlug?: string,
+  targetSlug?: string
+): Promise<SurveyComparisonDelta> {
+  const params = new URLSearchParams();
+  if (baselineSlug) params.set("baseline_slug", baselineSlug);
+  if (targetSlug) params.set("target_slug", targetSlug);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const resp = await fetch(
+    `${API_BASE}/api/rooms/${roomSlug}/surveys/delta${qs}`
+  );
+  if (!resp.ok) {
+    throw new Error(`Failed to load survey delta: ${resp.status}`);
   }
   return resp.json();
 }

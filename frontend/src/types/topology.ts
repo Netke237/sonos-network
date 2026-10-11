@@ -421,5 +421,82 @@ export interface PingSweepResult {
   results: PingSweepItem[];
 }
 
+export interface BssidDeltaItem {
+  bssid: string;
+  ssid?: string | null;
+  band: string;
+  channel: number;
+  classification: string;
+  baseline_rssi_dbm?: number | null;
+  target_rssi_dbm?: number | null;
+  delta_rssi_dbm?: number | null;
+  is_new: boolean;
+  is_vanished: boolean;
+}
+
+export interface SurveyComparisonDelta {
+  room_id: string;
+  room_slug: string;
+  room_name: string;
+  baseline_survey_id: string;
+  baseline_survey_slug: string;
+  baseline_label: string;
+  baseline_captured_at: string;
+  target_survey_id: string;
+  target_survey_slug: string;
+  target_label: string;
+  target_captured_at: string;
+  baseline_5ghz_dbm?: number | null;
+  target_5ghz_dbm?: number | null;
+  delta_5ghz_dbm?: number | null;
+  baseline_24ghz_dbm?: number | null;
+  target_24ghz_dbm?: number | null;
+  delta_24ghz_dbm?: number | null;
+  baseline_link_speed_mbps?: number | null;
+  target_link_speed_mbps?: number | null;
+  delta_link_speed_mbps?: number | null;
+  baseline_best_ap_name?: string | null;
+  target_best_ap_name?: string | null;
+  baseline_wifi_health_grade: HealthGrade | string;
+  target_wifi_health_grade: HealthGrade | string;
+  wifi_improved: boolean;
+  baseline_ofdm_ani_level?: number | null;
+  target_ofdm_ani_level?: number | null;
+  delta_ofdm_ani_level?: number | null;
+  baseline_phy_error_rate?: number | null;
+  target_phy_error_rate?: number | null;
+  delta_phy_error_rate?: number | null;
+  baseline_stp_path_cost?: number | null;
+  target_stp_path_cost?: number | null;
+  delta_stp_path_cost?: number | null;
+  baseline_ping_rtt_ms?: number | null;
+  target_ping_rtt_ms?: number | null;
+  delta_ping_rtt_ms?: number | null;
+  sonos_improved: boolean;
+  overall_improved: boolean;
+  summary_narrative: string;
+  bssid_deltas: BssidDeltaItem[];
+}
+
+export interface LiveRfSample {
+  rincon_uuid: string;
+  zone_name: string;
+  room_id?: string | null;
+  ip_address?: string | null;
+  ieee_channel?: number | null;
+  ofdm_ani_level?: number | null;
+  noise_floor_dbm?: number | null;
+  phy_error_total?: number | null;
+  phy_error_rate: number;
+  captured_at?: string;
+}
+
+export interface LiveRfFrame {
+  timestamp: string;
+  consumer_id: string;
+  room_slug: string;
+  samples: LiveRfSample[];
+}
+
 
 

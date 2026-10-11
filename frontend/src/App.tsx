@@ -9,6 +9,7 @@ import {
   fetchHouseOverview,
   fetchRoomDiagnostics,
   fetchRoomSurveys,
+  fetchSurveyDelta,
   flushGhostGroups,
   pollLiveSonosNow,
   runPingSweep,
@@ -21,9 +22,11 @@ import type {
   FloorMatrixItem,
   HealthGrade,
   HouseOverview,
+  LiveRfSample,
   RoomDiagnosticSummary,
   RoomMatrixItem,
   SolutionProposal,
+  SurveyComparisonDelta,
   WiFiRoomSurvey,
 } from "./types/topology";
 
@@ -50,13 +53,25 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [includeArchived, setIncludeArchived] = useState<boolean>(false);
   const [crudOpen, setCrudOpen] = useState<boolean>(false);
-  const [activeViewTab, setActiveViewTab] = useState<"MATRIX" | "GRAPH">("MATRIX");
+  const [activeViewTab, setActiveViewTab] = useState<"MATRIX" | "GRAPH" | "LIVE_RF">("MATRIX");
   const [selectedRoom, setSelectedRoom] = useState<RoomMatrixItem | null>(null);
   const [roomSurveys, setRoomSurveys] = useState<WiFiRoomSurvey[]>([]);
   const [selectedDiagnosticRoom, setSelectedDiagnosticRoom] = useState<RoomMatrixItem | null>(null);
   const [roomDiagnostics, setRoomDiagnostics] = useState<RoomDiagnosticSummary | null>(null);
   const [loadingDiagnostics, setLoadingDiagnostics] = useState<boolean>(false);
   const [actionBanner, setActionBanner] = useState<string | null>(null);
+
+  // T6 Survey Delta State
+  const [deltaOpen, setDeltaOpen] = useState<boolean>(false);
+  const [surveyDelta, setSurveyDelta] = useState<SurveyComparisonDelta | null>(null);
+  const [baselineSurveySlug, setBaselineSurveySlug] = useState<string>("");
+  const [targetSurveySlug, setTargetSurveySlug] = useState<string>("");
+
+  // T6 Live RF Console State
+  const [liveRfSamples, setLiveRfSamples] = useState<LiveRfSample[]>([]);
+  const [liveRfConnected, setLiveRfConnected] = useState<boolean>(false);
+  const [liveRfPaused, setLiveRfPaused] = useState<boolean>(false);
+  const [liveRfRoomFilter, setLiveRfRoomFilter] = useState<string>("all");
 
   // Room Survey Form State
   const [surveyLabel, setSurveyLabel] = useState<string>("");
@@ -112,6 +127,58 @@ export default function App() {
   useEffect(() => {
     void loadData(includeArchived);
   }, [includeArchived]);
+
+  useEffect(() => {
+    if (activeViewTab !== "LIVE_RF" || liveRfPaused) return;
+    const apiBase =
+      (import.meta as unknown as { env?: Record<string, string> }).env
+        ?.VITE_API_BASE_URL ?? "http://192.168.55.60:8000";
+    const wsBase = apiBase.replace(/^http/, "ws");
+    const wsUrl = `${wsBase}/api/ws/live-rf?room_slug=${liveRfRoomFilter}&interval_sec=1.5`;
+
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => setLiveRfConnected(true);
+      ws.onclose = () => setLiveRfConnected(false);
+      ws.onerror = () => setLiveRfConnected(false);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.samples && Array.isArray(data.samples)) {
+            setLiveRfSamples(data.samples);
+          }
+        } catch {
+          // ignore
+        }
+      };
+    } catch {
+      // ignore
+    }
+    return () => {
+      if (ws) ws.close();
+    };
+  }, [activeViewTab, liveRfPaused, liveRfRoomFilter]);
+
+  const handleLoadSurveyDelta = async (
+    baseSlug?: string,
+    targetSlug?: string
+  ) => {
+    if (!selectedRoom) return;
+    try {
+      const d = await fetchSurveyDelta(
+        selectedRoom.slug,
+        baseSlug || undefined,
+        targetSlug || undefined
+      );
+      setSurveyDelta(d);
+      setDeltaOpen(true);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load survey delta"
+      );
+    }
+  };
 
   const handleOpenRoomSurveys = async (room: RoomMatrixItem) => {
     setSelectedRoom(room);
@@ -859,12 +926,211 @@ export default function App() {
         >
           Interactive Network Topology Graph
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveViewTab("LIVE_RF")}
+          style={{
+            backgroundColor: activeViewTab === "LIVE_RF" ? "#0284c7" : "#1e293b",
+            color: "#f8fafc",
+            border: "1px solid #38bdf8",
+            borderRadius: "8px",
+            padding: "8px 16px",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          Live RF &amp; EMI Isolation Console
+        </button>
       </nav>
 
       {loading && <p>Loading house topology...</p>}
       {error && <p style={{ color: "#f87171" }}>Error: {error}</p>}
 
-      {activeViewTab === "GRAPH" ? (
+      {activeViewTab === "LIVE_RF" ? (
+        <section
+          role="region"
+          aria-label="Live RF and EMI Isolation Console"
+          style={{
+            backgroundColor: "#1e293b",
+            borderRadius: "12px",
+            padding: "20px",
+            border: "1px solid #38bdf8",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: "16px",
+              flexWrap: "wrap",
+              gap: "10px",
+            }}
+          >
+            <div>
+              <h2 style={{ margin: 0, fontSize: "1.3rem", color: "#f8fafc" }}>
+                Live RF &amp; EMI Isolation Console
+              </h2>
+              <p
+                style={{
+                  margin: "4px 0 0",
+                  color: "#94a3b8",
+                  fontSize: "0.85rem",
+                }}
+              >
+                High-frequency (1.5–2s) live OFDM ANI and PHY Error Velocity stream for sequential EMI source isolation.
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              <button
+                type="button"
+                onClick={() => setLiveRfPaused(!liveRfPaused)}
+                style={{
+                  backgroundColor: liveRfPaused ? "#059669" : "#d97706",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "6px",
+                  padding: "6px 14px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {liveRfPaused ? "Resume Live Stream" : "Pause Stream"}
+              </button>
+            </div>
+          </div>
+
+          {/* EMI Isolation Guidance Box */}
+          <div
+            style={{
+              backgroundColor: "#312e81",
+              border: "1px solid #6366f1",
+              borderRadius: "8px",
+              padding: "12px 16px",
+              marginBottom: "20px",
+              color: "#e0e7ff",
+              fontSize: "0.85rem",
+            }}
+          >
+            <strong>Sequential EMI Isolation Procedure: </strong>
+            Unplug USB-C dock or power bricks while watching PHY error rate drop to 0.0 err/s
+          </div>
+
+          {/* Live Table */}
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "0.82rem",
+              }}
+            >
+              <thead>
+                <tr
+                  style={{
+                    borderBottom: "1px solid #475569",
+                    color: "#94a3b8",
+                    textAlign: "left",
+                  }}
+                >
+                  <th style={{ padding: "8px" }}>Zone Name</th>
+                  <th style={{ padding: "8px" }}>IP Address</th>
+                  <th style={{ padding: "8px" }}>Channel</th>
+                  <th style={{ padding: "8px" }}>OFDM ANI Level</th>
+                  <th style={{ padding: "8px" }}>Noise Floor</th>
+                  <th style={{ padding: "8px" }}>PHY Error Rate</th>
+                  <th style={{ padding: "8px" }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {liveRfSamples.map((s) => {
+                  const hasSpike =
+                    (s.ofdm_ani_level != null && s.ofdm_ani_level >= 7) ||
+                    s.phy_error_rate > 100;
+                  return (
+                    <tr
+                      key={s.rincon_uuid}
+                      style={{
+                        borderBottom: "1px solid #334155",
+                        backgroundColor: hasSpike ? "#450a0a" : "transparent",
+                      }}
+                    >
+                      <td
+                        style={{
+                          padding: "10px 8px",
+                          fontWeight: 600,
+                          color: "#f8fafc",
+                        }}
+                      >
+                        {s.zone_name}
+                      </td>
+                      <td style={{ padding: "10px 8px", color: "#94a3b8" }}>
+                        {s.ip_address ?? "N/A"}
+                      </td>
+                      <td style={{ padding: "10px 8px", color: "#cbd5e1" }}>
+                        Ch {s.ieee_channel ?? 6}
+                      </td>
+                      <td style={{ padding: "10px 8px" }}>
+                        <span
+                          style={{
+                            backgroundColor:
+                              (s.ofdm_ani_level ?? 0) >= 7
+                                ? "#7f1d1d"
+                                : (s.ofdm_ani_level ?? 0) >= 4
+                                ? "#713f12"
+                                : "#064e3b",
+                            color:
+                              (s.ofdm_ani_level ?? 0) >= 7
+                                ? "#fca5a5"
+                                : (s.ofdm_ani_level ?? 0) >= 4
+                                ? "#fde047"
+                                : "#6ee7b7",
+                            padding: "2px 8px",
+                            borderRadius: "999px",
+                            fontWeight: 700,
+                          }}
+                        >
+                          {s.ofdm_ani_level != null
+                            ? `ANI ${s.ofdm_ani_level}`
+                            : "ANI N/A"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 8px", color: "#cbd5e1" }}>
+                        {s.noise_floor_dbm != null
+                          ? `${s.noise_floor_dbm} dBm`
+                          : "N/A"}
+                      </td>
+                      <td
+                        style={{
+                          padding: "10px 8px",
+                          fontWeight: 700,
+                          color:
+                            s.phy_error_rate > 100
+                              ? "#ef4444"
+                              : s.phy_error_rate > 20
+                              ? "#f59e0b"
+                              : "#10b981",
+                        }}
+                      >
+                        {`${s.phy_error_rate.toFixed(1)} err/s`}
+                      </td>
+                      <td style={{ padding: "10px 8px" }}>
+                        {hasSpike ? (
+                          <span style={{ color: "#ef4444", fontWeight: 700 }}>
+                            Severe EMI Spike
+                          </span>
+                        ) : (
+                          <span style={{ color: "#10b981" }}>Clean</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : activeViewTab === "GRAPH" ? (
         <TopologyGraphView
           floors={sortedFloors}
           onInspectRoomSlug={(roomSlug) => {
@@ -1759,6 +2025,214 @@ export default function App() {
           <p style={{ color: "#cbd5e1", fontSize: "0.85rem", marginBottom: "16px" }}>
             {selectedRoom.description}
           </p>
+
+          {/* Action toolbar for Drawer */}
+          <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => void handleLoadSurveyDelta(baselineSurveySlug, targetSurveySlug)}
+              style={{
+                backgroundColor: "#0284c7",
+                color: "#ffffff",
+                border: "none",
+                borderRadius: "6px",
+                padding: "6px 14px",
+                fontSize: "0.8rem",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Compare Surveys / View Delta
+            </button>
+          </div>
+
+          {/* Survey Before/After Comparison Delta Region */}
+          {deltaOpen && surveyDelta && (
+            <section
+              role="region"
+              aria-label="Survey Before/After Comparison Delta"
+              style={{
+                backgroundColor: "#0f172a",
+                border: "1px solid #38bdf8",
+                borderRadius: "8px",
+                padding: "16px",
+                marginBottom: "20px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <h4 style={{ margin: 0, fontSize: "1rem", color: "#38bdf8" }}>
+                  Survey Before/After Comparison Delta
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setDeltaOpen(false)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#94a3b8",
+                    fontSize: "0.8rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  Hide Delta
+                </button>
+              </div>
+
+              {/* Survey Selectors */}
+              <div style={{ display: "flex", gap: "12px", marginBottom: "12px", flexWrap: "wrap" }}>
+                <label style={{ fontSize: "0.78rem", color: "#cbd5e1" }}>
+                  Baseline Survey:
+                  <select
+                    value={baselineSurveySlug || surveyDelta.baseline_survey_slug}
+                    onChange={(e) => {
+                      setBaselineSurveySlug(e.target.value);
+                      void handleLoadSurveyDelta(e.target.value, targetSurveySlug || surveyDelta.target_survey_slug);
+                    }}
+                    style={{
+                      display: "block",
+                      marginTop: "4px",
+                      background: "#1e293b",
+                      color: "#f8fafc",
+                      border: "1px solid #475569",
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                    }}
+                  >
+                    {roomSurveys.map((s) => (
+                      <option key={s.survey_slug} value={s.survey_slug}>
+                        {s.label} ({s.survey_slug})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ fontSize: "0.78rem", color: "#cbd5e1" }}>
+                  Target Survey:
+                  <select
+                    value={targetSurveySlug || surveyDelta.target_survey_slug}
+                    onChange={(e) => {
+                      setTargetSurveySlug(e.target.value);
+                      void handleLoadSurveyDelta(baselineSurveySlug || surveyDelta.baseline_survey_slug, e.target.value);
+                    }}
+                    style={{
+                      display: "block",
+                      marginTop: "4px",
+                      background: "#1e293b",
+                      color: "#f8fafc",
+                      border: "1px solid #475569",
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                    }}
+                  >
+                    {roomSurveys.map((s) => (
+                      <option key={s.survey_slug} value={s.survey_slug}>
+                        {s.label} ({s.survey_slug})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {/* Narrative Summary */}
+              <div
+                style={{
+                  backgroundColor: "#1e293b",
+                  borderRadius: "6px",
+                  padding: "10px 14px",
+                  marginBottom: "14px",
+                  color: "#f8fafc",
+                  fontSize: "0.85rem",
+                  borderLeft: "4px solid #38bdf8",
+                }}
+              >
+                {surveyDelta.summary_narrative}
+              </div>
+
+              {/* Metric Delta Badges */}
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "16px" }}>
+                <span
+                  style={{
+                    backgroundColor: "#1e293b",
+                    padding: "4px 10px",
+                    borderRadius: "6px",
+                    fontSize: "0.8rem",
+                    fontWeight: 600,
+                    color: (surveyDelta.delta_5ghz_dbm ?? 0) >= 0 ? "#86efac" : "#fca5a5",
+                  }}
+                >
+                  5 GHz: {surveyDelta.delta_5ghz_dbm != null ? `${surveyDelta.delta_5ghz_dbm > 0 ? "+" : ""}${surveyDelta.delta_5ghz_dbm} dBm` : "N/A"}
+                </span>
+                <span
+                  style={{
+                    backgroundColor: "#1e293b",
+                    padding: "4px 10px",
+                    borderRadius: "6px",
+                    fontSize: "0.8rem",
+                    fontWeight: 600,
+                    color: (surveyDelta.delta_24ghz_dbm ?? 0) >= 0 ? "#86efac" : "#fca5a5",
+                  }}
+                >
+                  2.4 GHz: {surveyDelta.delta_24ghz_dbm != null ? `${surveyDelta.delta_24ghz_dbm > 0 ? "+" : ""}${surveyDelta.delta_24ghz_dbm} dBm` : "N/A"}
+                </span>
+                <span
+                  style={{
+                    backgroundColor: "#1e293b",
+                    padding: "4px 10px",
+                    borderRadius: "6px",
+                    fontSize: "0.8rem",
+                    fontWeight: 600,
+                    color: (surveyDelta.delta_phy_error_rate ?? 0) <= 0 ? "#86efac" : "#fca5a5",
+                  }}
+                >
+                  PHY Err/s: {surveyDelta.delta_phy_error_rate != null ? `${surveyDelta.delta_phy_error_rate > 0 ? "+" : ""}${surveyDelta.delta_phy_error_rate.toFixed(1)} err/s` : "0.0 err/s"}
+                </span>
+              </div>
+
+              {/* BSSID Diff Table */}
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #475569", color: "#94a3b8", textAlign: "left" }}>
+                      <th style={{ padding: "6px" }}>BSSID</th>
+                      <th style={{ padding: "6px" }}>SSID</th>
+                      <th style={{ padding: "6px" }}>Band</th>
+                      <th style={{ padding: "6px" }}>Baseline RSSI</th>
+                      <th style={{ padding: "6px" }}>Target RSSI</th>
+                      <th style={{ padding: "6px" }}>Delta RSSI</th>
+                      <th style={{ padding: "6px" }}>Classification / Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {surveyDelta.bssid_deltas.map((b) => (
+                      <tr key={b.bssid} style={{ borderBottom: "1px solid #1e293b" }}>
+                        <td style={{ padding: "6px", color: "#f8fafc", fontFamily: "monospace" }}>{b.bssid}</td>
+                        <td style={{ padding: "6px", color: "#cbd5e1" }}>{b.ssid ?? "N/A"}</td>
+                        <td style={{ padding: "6px", color: "#94a3b8" }}>{b.band} (Ch {b.channel})</td>
+                        <td style={{ padding: "6px", color: "#cbd5e1" }}>{b.baseline_rssi_dbm != null ? `${b.baseline_rssi_dbm} dBm` : "N/A"}</td>
+                        <td style={{ padding: "6px", color: "#cbd5e1" }}>{b.target_rssi_dbm != null ? `${b.target_rssi_dbm} dBm` : "N/A"}</td>
+                        <td style={{ padding: "6px", fontWeight: 700, color: (b.delta_rssi_dbm ?? 0) >= 0 ? "#86efac" : "#fca5a5" }}>
+                          {b.delta_rssi_dbm != null ? `${b.delta_rssi_dbm > 0 ? "+" : ""}${b.delta_rssi_dbm} dBm` : "N/A"}
+                        </td>
+                        <td style={{ padding: "6px" }}>
+                          {b.is_vanished ? (
+                            <span style={{ backgroundColor: "#7f1d1d", color: "#fca5a5", padding: "1px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                              VANISHED
+                            </span>
+                          ) : b.is_new ? (
+                            <span style={{ backgroundColor: "#064e3b", color: "#6ee7b7", padding: "1px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                              NEW
+                            </span>
+                          ) : (
+                            <span style={{ color: "#94a3b8" }}>{b.classification}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           {/* Historical & Post-Remediation Surveys with BSSID Spectrum Tables */}
           <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginBottom: "20px" }}>

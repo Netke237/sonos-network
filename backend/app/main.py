@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +56,7 @@ from app.schemas.topology import (
     RoomDiagnosticSummarySchema,
     RoomRead,
     RoomUpdate,
+    SurveyComparisonDeltaSchema,
     SwitchPortCreate,
     SwitchPortRead,
     SwitchPortUpdate,
@@ -424,6 +437,57 @@ def create_app(
         if survey is None:
             raise HTTPException(status_code=404, detail="Room not found")
         return survey
+
+    @app.get(
+        "/api/rooms/{room_slug}/surveys/delta",
+        response_model=SurveyComparisonDeltaSchema,
+    )
+    async def get_room_survey_delta(
+        room_slug: str,
+        baseline_slug: str | None = Query(None),
+        target_slug: str | None = Query(None),
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+    ) -> SurveyComparisonDeltaSchema:
+        delta = await repo.compute_survey_delta(
+            room_ref=room_slug,
+            baseline_slug=baseline_slug,
+            target_slug=target_slug,
+        )
+        if delta is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Room '{room_slug}' or required surveys not found",
+            )
+        return delta
+
+    @app.websocket("/api/ws/live-rf")
+    async def ws_live_rf(
+        websocket: WebSocket,
+        room_slug: str = "all",
+        interval_sec: float = 2.0,
+        max_iterations: int | None = None,
+    ):
+        await websocket.accept()
+        consumer_id = f"ws-{uuid.uuid4().hex[:8]}"
+        sonos_adapter: SonosTelemetryPort = websocket.app.state.sonos_adapter
+        try:
+            async for samples in sonos_adapter.stream_room_rf_velocity(
+                room_id=room_slug,
+                interval_sec=interval_sec,
+                consumer_id=consumer_id,
+                max_iterations=max_iterations,
+            ):
+                payload = {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "consumer_id": consumer_id,
+                    "room_slug": room_slug,
+                    "samples": [s.model_dump(mode="json") for s in samples],
+                }
+                await websocket.send_json(payload)
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
 
     # --- Deterministic Diagnostics & Ping/Jitter Sweep ---
     @app.get("/api/diagnostics", response_model=HouseDiagnosticReportSchema)
