@@ -15,12 +15,22 @@
     {
       "id": "PHASE-1-CORE-PLATFORM",
       "title": "Always-On Home Wi-Fi & Sonos Network Intelligence Platform (Backend + PC/Web Frontend on Mini PC)",
-      "status": "not_started",
-      "plan_audit_rounds": 0,
+      "status": "in_progress",
+      "plan_audit_rounds": 1,
       "plan_audit_clean": false,
       "code_audit_rounds": 0,
       "audit_clean": false,
-      "rounds": []
+      "rounds": [
+        {
+          "stage": "plan",
+          "round": 1,
+          "reviewer": "1b6bc996-7478-4ddc-aea4-5c162e80acd1 (Independent Plan Gate Auditor)",
+          "findings_count": 5,
+          "findings": ["F-01", "F-02", "F-03", "F-04", "F-05"],
+          "fixes": "Resolved F-01 (lower-5-octet BSSID matching for EAP650 virtual SSIDs + exact BaseMAC+1 SonosNet BSSID matching), F-02 (ConnectionMode-scoped grading for STATION_MODE, active FORWARDING root-port SNR, ETHERNET_ROOT/NODE, and 0,0,0,0/None normalization), F-03 (Netgear GS316EP BPDU pass-through lowest-MAC STP root usurpation guard when wiring secondary rooms), F-04 (per-consumer PhyErrorRate delta cursors, cold 2-sample probe, and reboot counter reset handling), and F-05 (nested Satellite parsing for Fernsehecke RR, Eltern->Elternschlafzimmer room mapping, insert-if-absent seeding, soft-archive, and unified REST/WS route paths).",
+          "outstanding": []
+        }
+      ]
     }
   ],
   "task_backlog": {
