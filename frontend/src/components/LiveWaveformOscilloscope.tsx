@@ -400,6 +400,7 @@ export const LiveWaveformOscilloscope: React.FC<LiveWaveformOscilloscopeProps> =
         }}
       >
         <svg
+          data-testid="oscilloscope-svg-canvas"
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
           style={{ width: "100%", height: "auto", display: "block" }}
         >
