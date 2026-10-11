@@ -1,7 +1,9 @@
 import type {
   ConnectionMode,
   DeviceRole,
+  GhostFlushResult,
   HealthGrade,
+  HouseholdSonosSnapshot,
   HouseOverview,
   NetworkDevice,
   Room,
@@ -19,6 +21,30 @@ export async function fetchHouseOverview(
   const resp = await fetch(`${API_BASE}/api/overview${query}`);
   if (!resp.ok) {
     throw new Error(`Failed to load overview: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function pollLiveSonosNow(): Promise<HouseholdSonosSnapshot> {
+  const resp = await fetch(`${API_BASE}/api/actions/poll-now`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to poll Sonos telemetry: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function flushGhostGroups(
+  zoneIps?: string[]
+): Promise<GhostFlushResult> {
+  const resp = await fetch(`${API_BASE}/api/actions/flush-ghost-groups`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(zoneIps ? { zone_ips: zoneIps } : {}),
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to flush ghost groups: ${resp.status}`);
   }
   return resp.json();
 }

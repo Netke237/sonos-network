@@ -6,6 +6,8 @@ import {
   createRoom,
   createSwitchPort,
   fetchHouseOverview,
+  flushGhostGroups,
+  pollLiveSonosNow,
 } from "./api/topologyApi";
 import type {
   ConnectionMode,
@@ -30,6 +32,7 @@ export default function App() {
   const [includeArchived, setIncludeArchived] = useState<boolean>(false);
   const [crudOpen, setCrudOpen] = useState<boolean>(false);
   const [selectedRoom, setSelectedRoom] = useState<RoomMatrixItem | null>(null);
+  const [actionBanner, setActionBanner] = useState<string | null>(null);
 
   // Room Form State
   const [roomName, setRoomName] = useState<string>("");
@@ -74,6 +77,32 @@ export default function App() {
   useEffect(() => {
     void loadData(includeArchived);
   }, [includeArchived]);
+
+  const handlePollSonosNow = async () => {
+    try {
+      const snap = await pollLiveSonosNow();
+      setActionBanner(
+        `Polled ${snap.reachable_players}/${snap.total_players} Sonos players (${snap.batch_id})`
+      );
+      await loadData(includeArchived);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to poll Sonos");
+    }
+  };
+
+  const handleFlushGhostGroups = async () => {
+    try {
+      const res = await flushGhostGroups();
+      setActionBanner(
+        `Flushed ${res.flushed_count} Ghost Group(s): ${
+          res.flushed_zones.join(", ") || "All zones clean"
+        }`
+      );
+      await loadData(includeArchived);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to flush ghost groups");
+    }
+  };
 
   const handleCreateRoom = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -171,7 +200,7 @@ export default function App() {
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
           <label
             style={{
               display: "flex",
@@ -191,6 +220,36 @@ export default function App() {
           </label>
           <button
             type="button"
+            onClick={() => void handlePollSonosNow()}
+            style={{
+              backgroundColor: "#0d9488",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 14px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Poll Live Sonos Now
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleFlushGhostGroups()}
+            style={{
+              backgroundColor: "#dc2626",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 14px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Flush Ghost Groups
+          </button>
+          <button
+            type="button"
             onClick={() => setCrudOpen((prev) => !prev)}
             style={{
               backgroundColor: "#2563eb",
@@ -206,6 +265,37 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* Ghost Group & Action Status Banner */}
+      {(overview?.has_ghost_groups || actionBanner) && (
+        <div
+          role="status"
+          style={{
+            backgroundColor: overview?.has_ghost_groups ? "#7f1d1d" : "#064e3b",
+            border: `1px solid ${overview?.has_ghost_groups ? "#ef4444" : "#10b981"}`,
+            color: "#f8fafc",
+            borderRadius: "8px",
+            padding: "10px 16px",
+            marginBottom: "20px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "8px",
+          }}
+        >
+          <div>
+            {overview?.has_ghost_groups && (
+              <span style={{ marginRight: "12px", fontWeight: 700, color: "#fca5a5" }}>
+                Active Ghost Group Detected ({overview.ghost_group_count}):{" "}
+                {overview.ghost_group_zones?.join(", ")}
+              </span>
+            )}
+            {actionBanner && <span>{actionBanner}</span>}
+          </div>
+        </div>
+      )}
+
 
       {/* Summary KPI Strip */}
       {overview && (
@@ -731,55 +821,116 @@ export default function App() {
 
                     {/* Devices in Room */}
                     <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                      {room.devices.map((dev) => (
-                        <div
-                          key={dev.id}
-                          style={{
-                            backgroundColor: "#1e293b",
-                            borderRadius: "6px",
-                            padding: "8px 10px",
-                            fontSize: "0.8rem",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontWeight: 600, color: "#f1f5f9" }}>
-                              {dev.name}{" "}
-                              {dev.is_archived && (
-                                <span style={{ color: "#f87171" }}>(Archived)</span>
-                              )}
-                            </div>
-                            <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
-                              {dev.model_name} · {dev.ip_address ?? "Bonded"} ·{" "}
-                              {dev.connection_mode ?? dev.device_role}
-                              {dev.ofdm_ani_level != null
-                                ? ` · ANI ${dev.ofdm_ani_level}`
-                                : ""}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            title="Archive Device"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleArchiveDevice(dev.id);
-                            }}
+                      {room.devices.map((dev) => {
+                        const isSonos = dev.device_role === "SONOS_PLAYER";
+                        return (
+                          <div
+                            key={dev.id}
                             style={{
-                              background: "transparent",
-                              border: "1px solid #475569",
-                              color: "#cbd5e1",
-                              borderRadius: "4px",
-                              padding: "2px 6px",
-                              fontSize: "0.7rem",
-                              cursor: "pointer",
+                              backgroundColor: "#1e293b",
+                              border: dev.is_ghost_group
+                                ? "1px solid #ef4444"
+                                : "1px solid transparent",
+                              borderRadius: "6px",
+                              padding: "8px 10px",
+                              fontSize: "0.8rem",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: "8px",
                             }}
                           >
-                            Archive
-                          </button>
-                        </div>
-                      ))}
+                            <div style={{ flex: 1 }}>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "6px",
+                                  flexWrap: "wrap",
+                                  fontWeight: 600,
+                                  color: "#f1f5f9",
+                                }}
+                              >
+                                <span>{dev.name}</span>
+                                {dev.is_archived && (
+                                  <span style={{ color: "#f87171" }}>(Archived)</span>
+                                )}
+                                {isSonos && dev.is_ghost_group && (
+                                  <span
+                                    style={{
+                                      backgroundColor: "#7f1d1d",
+                                      color: "#fca5a5",
+                                      padding: "1px 6px",
+                                      borderRadius: "999px",
+                                      fontSize: "0.66rem",
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    GHOST GROUP
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
+                                {dev.model_name} · {dev.ip_address ?? "Bonded"} ·{" "}
+                                {dev.connection_mode ?? dev.device_role}
+                              </div>
+                              {isSonos && (
+                                <div
+                                  style={{
+                                    fontSize: "0.7rem",
+                                    color: "#cbd5e1",
+                                    marginTop: "3px",
+                                    display: "flex",
+                                    gap: "8px",
+                                    flexWrap: "wrap",
+                                  }}
+                                >
+                                  <span>
+                                    {dev.ofdm_ani_level != null
+                                      ? `ANI ${dev.ofdm_ani_level}`
+                                      : "ANI N/A"}
+                                  </span>
+                                  <span>
+                                    {dev.noise_floor_dbm != null
+                                      ? `${dev.noise_floor_dbm} dBm`
+                                      : "Noise N/A"}
+                                  </span>
+                                  <span>
+                                    {dev.phy_error_rate != null
+                                      ? `${dev.phy_error_rate.toFixed(1)} err/s`
+                                      : "0.0 err/s"}
+                                  </span>
+                                  {dev.stp_path_cost != null && (
+                                    <span>{`STP Cost ${dev.stp_path_cost}`}</span>
+                                  )}
+                                  {dev.master_volume != null && (
+                                    <span>{`Vol ${dev.master_volume}%`}</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              title="Archive Device"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleArchiveDevice(dev.id);
+                              }}
+                              style={{
+                                background: "transparent",
+                                border: "1px solid #475569",
+                                color: "#cbd5e1",
+                                borderRadius: "4px",
+                                padding: "2px 6px",
+                                fontSize: "0.7rem",
+                                cursor: "pointer",
+                              }}
+                            >
+                              Archive
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
 
                     <div

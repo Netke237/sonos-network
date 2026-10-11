@@ -171,6 +171,18 @@ class NetworkDeviceRead(BaseModel):
     connection_mode: str | None = None
     health_grade: str
     ofdm_ani_level: int | None = None
+    noise_floor_dbm: int | None = None
+    phy_error_total: int | None = None
+    phy_error_rate: float | None = None
+    designated_root: str | None = None
+    stp_path_cost: int | None = None
+    group_id: str | None = None
+    coordinator_uuid: str | None = None
+    is_ghost_group: bool = False
+    master_volume: int | None = None
+    ping_rtt_ms: float | None = None
+    ieee_channel: int | None = None
+    bonded_parent_uuid: str | None = None
     room_id: str | None = None
     switch_port_id: str | None = None
     notes: str | None = None
@@ -195,4 +207,103 @@ class HouseOverviewDto(BaseModel):
     total_wifi_aps: int
     total_switch_ports: int
     designated_stp_root: str
+    ghost_group_count: int = 0
+    has_ghost_groups: bool = False
+    ghost_group_zones: list[str] = []
+    latest_sonos_batch_id: str | None = None
+    latest_sonos_captured_at: datetime | None = None
     floors: list[FloorMatrixItemDto]
+
+
+class PlayerTelemetryDto(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    rincon_uuid: str
+    zone_name: str
+    device_id: str | None = None
+    room_id: str | None = None
+    room_name: str | None = None
+    ip_address: str | None = None
+    base_mac: str | None = None
+    sonosnet_bssid: str | None = None
+    is_reachable: bool = True
+    connection_mode: ConnectionMode = ConnectionMode.SONOSNET_MODE
+    ieee_channel: int | None = None
+    ofdm_ani_level: int | None = None
+    noise_floor_dbm: int | None = None
+    phy_error_total: int | None = None
+    phy_error_rate: float | None = None
+    designated_root: str | None = None
+    stp_root_port: str | None = None
+    stp_path_cost: int | None = None
+    group_id: str | None = None
+    coordinator_uuid: str | None = None
+    has_vanished_devices: bool = False
+    is_ghost_group: bool = False
+    master_volume: int | None = None
+    ping_rtt_ms: float | None = None
+    bonded_parent_uuid: str | None = None
+
+
+class SonosMeshLinkDto(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source_rincon_uuid: str
+    target_rincon_uuid: str
+    source_zone_name: str | None = None
+    target_zone_name: str | None = None
+    source_bssid: str | None = None
+    target_bssid: str | None = None
+    channel: int = 6
+    from_db: int
+    to_db: int
+    stp_state: str = "FORWARDING"
+
+
+class HouseholdSonosSnapshot(BaseModel):
+    batch_id: str
+    captured_at: datetime
+    consumer_id: str
+    designated_stp_root: str
+    is_root_healthy: bool
+    total_players: int
+    reachable_players: int
+    ghost_group_count: int
+    has_ghost_groups: bool
+    ghost_group_zones: list[str]
+    players: list[PlayerTelemetryDto]
+    mesh_links: list[SonosMeshLinkDto]
+
+
+class GhostFlushRequest(BaseModel):
+    zone_ips: list[str] | None = None
+
+
+class GhostFlushZoneResult(BaseModel):
+    zone_name: str
+    rincon_uuid: str
+    ip_address: str
+    previous_group_id: str | None = None
+    new_group_id: str
+    status: str
+
+
+class GhostFlushResult(BaseModel):
+    flushed_count: int
+    flushed_zones: list[str]
+    results: list[GhostFlushZoneResult]
+    captured_at: datetime
+
+
+class PlayerRfSample(BaseModel):
+    rincon_uuid: str
+    zone_name: str
+    room_id: str | None = None
+    ip_address: str | None = None
+    ieee_channel: int | None = None
+    ofdm_ani_level: int | None = None
+    noise_floor_dbm: int | None = None
+    phy_error_total: int | None = None
+    phy_error_rate: float
+    captured_at: datetime
+

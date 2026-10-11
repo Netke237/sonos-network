@@ -42,6 +42,12 @@ class HealthGrade(str, Enum):
     CRITICAL = "CRITICAL"
 
 
+class StpPortState(str, Enum):
+    FORWARDING = "FORWARDING"
+    BLOCKING = "BLOCKING"
+    DISABLED = "DISABLED"
+
+
 class Floor(Base):
     __tablename__ = "floors"
 
@@ -140,3 +146,77 @@ class NetworkDevice(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+
+
+class SonosTelemetrySnapshot(Base):
+    __tablename__ = "sonos_telemetry_snapshots"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_new_uuid)
+    snapshot_key: Mapped[str | None] = mapped_column(
+        String(160), unique=True, index=True, nullable=True
+    )
+    batch_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=_utcnow
+    )
+    consumer_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="on-demand"
+    )
+    device_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("network_devices.id"), index=True, nullable=True
+    )
+    room_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("rooms.id"), index=True, nullable=True
+    )
+    rincon_uuid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    zone_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    base_mac: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    sonosnet_bssid: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    is_reachable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    connection_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=ConnectionMode.SONOSNET_MODE.value
+    )
+    ieee_channel: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ofdm_ani_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    noise_floor_dbm: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    phy_error_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    phy_error_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    designated_root: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stp_root_port: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stp_path_cost: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    group_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    coordinator_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    has_vanished_devices: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    is_ghost_group: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    master_volume: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ping_rtt_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bonded_parent_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class SonosMeshLink(Base):
+    __tablename__ = "sonos_mesh_links"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_new_uuid)
+    link_key: Mapped[str | None] = mapped_column(
+        String(160), unique=True, index=True, nullable=True
+    )
+    batch_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=_utcnow
+    )
+    source_rincon_uuid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    target_rincon_uuid: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    source_bssid: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_bssid: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    channel: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
+    from_db: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    to_db: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stp_state: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=StpPortState.FORWARDING.value
+    )
+

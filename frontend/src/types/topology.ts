@@ -51,6 +51,18 @@ export interface NetworkDevice {
   connection_mode?: ConnectionMode | null;
   health_grade: HealthGrade;
   ofdm_ani_level?: number | null;
+  noise_floor_dbm?: number | null;
+  phy_error_total?: number | null;
+  phy_error_rate?: number | null;
+  designated_root?: string | null;
+  stp_path_cost?: number | null;
+  group_id?: string | null;
+  coordinator_uuid?: string | null;
+  is_ghost_group?: boolean;
+  master_volume?: number | null;
+  ping_rtt_ms?: number | null;
+  ieee_channel?: number | null;
+  bonded_parent_uuid?: string | null;
   room_id?: string | null;
   switch_port_id?: string | null;
   notes?: string | null;
@@ -87,5 +99,42 @@ export interface HouseOverview {
   total_wifi_aps: number;
   total_switch_ports: number;
   designated_stp_root: string;
+  ghost_group_count?: number;
+  has_ghost_groups?: boolean;
+  ghost_group_zones?: string[];
+  latest_sonos_batch_id?: string | null;
+  latest_sonos_captured_at?: string | null;
   floors: FloorMatrixItem[];
 }
+
+export interface GhostFlushZoneResult {
+  zone_name: string;
+  rincon_uuid: string;
+  ip_address: string;
+  previous_group_id?: string | null;
+  new_group_id: string;
+  status: string;
+}
+
+export interface GhostFlushResult {
+  flushed_count: number;
+  flushed_zones: string[];
+  results: GhostFlushZoneResult[];
+  captured_at: string;
+}
+
+export interface HouseholdSonosSnapshot {
+  batch_id: string;
+  captured_at: string;
+  consumer_id: string;
+  designated_stp_root: string;
+  is_root_healthy: boolean;
+  total_players: number;
+  reachable_players: number;
+  ghost_group_count: number;
+  has_ghost_groups: boolean;
+  ghost_group_zones: string[];
+  players: unknown[];
+  mesh_links: unknown[];
+}
+

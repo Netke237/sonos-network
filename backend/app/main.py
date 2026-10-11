@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import Base, build_engine_and_sessionmaker
+from app.modules.sonos_telemetry import (
+    FakeSonosAdapter,
+    HttpSonosAdapter,
+    SonosTelemetryPort,
+)
 from app.repositories.topology_repository import SqlAlchemyTopologyRepository
 from app.schemas.topology import (
     FloorCreate,
     FloorRead,
     FloorUpdate,
+    GhostFlushRequest,
+    GhostFlushResult,
     HouseOverviewDto,
+    HouseholdSonosSnapshot,
     NetworkDeviceCreate,
     NetworkDeviceRead,
     NetworkDeviceUpdate,
@@ -27,13 +36,22 @@ from app.schemas.topology import (
 from app.seeds.initial_seed import seed_initial_data
 
 
-def create_app(database_url: str | None = None) -> FastAPI:
+def create_app(
+    database_url: str | None = None,
+    sonos_adapter: SonosTelemetryPort | None = None,
+) -> FastAPI:
     engine, session_factory = build_engine_and_sessionmaker(database_url)
+    default_adapter: SonosTelemetryPort = sonos_adapter or (
+        HttpSonosAdapter()
+        if os.getenv("SONOS_USE_LIVE_HTTP") == "1"
+        else FakeSonosAdapter(probe_interval_sec=0.01)
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.engine = engine
         app.state.session_factory = session_factory
+        app.state.sonos_adapter = default_adapter
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         async with session_factory() as session:
@@ -50,6 +68,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     )
     app.state.engine = engine
     app.state.session_factory = session_factory
+    app.state.sonos_adapter = default_adapter
 
     app.add_middleware(
         CORSMiddleware,
@@ -69,6 +88,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
     ) -> SqlAlchemyTopologyRepository:
         return SqlAlchemyTopologyRepository(session)
 
+    def get_sonos_adapter(request: Request) -> SonosTelemetryPort:
+        return request.app.state.sonos_adapter
+
     @app.get("/api/health")
     async def health_check() -> dict[str, str]:
         return {"status": "ok"}
@@ -79,6 +101,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         repo: SqlAlchemyTopologyRepository = Depends(get_repo),
     ) -> HouseOverviewDto:
         return await repo.get_house_overview(include_archived=include_archived)
+
 
     # --- Floors CRUD ---
     @app.get("/api/floors", response_model=list[FloorRead])
@@ -258,7 +281,42 @@ def create_app(database_url: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="NetworkDevice not found")
         return NetworkDeviceRead.model_validate(dev)
 
+    # --- Sonos Telemetry & Actions ---
+    @app.get("/api/sonos/telemetry", response_model=HouseholdSonosSnapshot)
+    async def get_sonos_telemetry(
+        batch_id: str | None = Query(None),
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+        adapter: SonosTelemetryPort = Depends(get_sonos_adapter),
+    ) -> HouseholdSonosSnapshot:
+        snap = await repo.get_sonos_telemetry(batch_id=batch_id)
+        if snap is not None:
+            return snap
+        if batch_id is not None:
+            raise HTTPException(status_code=404, detail="Sonos telemetry batch not found")
+        collected = await adapter.collect_household_snapshot(consumer_id="on-demand")
+        return await repo.save_sonos_snapshot(collected)
+
+    @app.post("/api/actions/poll-now", response_model=HouseholdSonosSnapshot)
+    async def poll_sonos_now(
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+        adapter: SonosTelemetryPort = Depends(get_sonos_adapter),
+    ) -> HouseholdSonosSnapshot:
+        collected = await adapter.collect_household_snapshot(consumer_id="on-demand")
+        return await repo.save_sonos_snapshot(collected)
+
+    @app.post("/api/actions/flush-ghost-groups", response_model=GhostFlushResult)
+    async def flush_ghost_groups_action(
+        payload: GhostFlushRequest | None = Body(default=None),
+        repo: SqlAlchemyTopologyRepository = Depends(get_repo),
+        adapter: SonosTelemetryPort = Depends(get_sonos_adapter),
+    ) -> GhostFlushResult:
+        zone_ips = payload.zone_ips if payload else None
+        result = await adapter.flush_ghost_groups(zone_ips=zone_ips)
+        await repo.apply_ghost_flush(result)
+        return result
+
     return app
 
 
 app = create_app()
+
