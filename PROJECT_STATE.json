@@ -70,8 +70,8 @@
     },
     {
       "id": "PHASE-1.5-UX-REDESIGN",
-      "title": "Intuitive Topology Graph, Keller Cross-Floor Anchors & Live Waveform Oscilloscope",
-      "status": "in_progress",
+      "title": "Intuitive Topology Graph, Keller Cross-Floor Anchors, Full-Width Canvas, Legend & Filterable Path Explorer",
+      "status": "completed",
       "plan_audit_rounds": 0,
       "plan_audit_clean": true,
       "code_audit_rounds": 2,
@@ -92,7 +92,7 @@
           "reviewer": "2039399d-66bd-4dd3-b893-a59012b5c3f1 (Independent Phase 1.5 Code Gate Auditor)",
           "findings_count": 0,
           "findings": [],
-          "fixes": "Verified CF-UX-01 and CF-UX-02 fixes clean. Full test suites pass: 17/17 frontend tests (Vitest), tsc --noEmit (0 errors), and 34/34 backend tests (pytest).",
+          "fixes": "Verified CF-UX-01 and CF-UX-02 fixes clean. Full test suites pass: 17/17 frontend tests (Vitest), tsc --noEmit (0 errors), and 34/34 backend tests (pytest). Merged PR #17 (T11 closes #16) with full-width responsive canvas, network legend, and filterable path telemetry explorer.",
           "outstanding": []
         }
       ]
