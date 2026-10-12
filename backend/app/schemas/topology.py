@@ -406,6 +406,7 @@ class BssidReadingSchema(BaseModel):
 class WiFiRoomSurveyCreate(BaseModel):
     label: str | None = None
     trigger_mode: str = "MANUAL_SURVEY"
+    captured_at: datetime | None = None
     connected_bssid: str | None = None
     connected_ssid: str | None = None
     link_speed_mbps: int | None = None

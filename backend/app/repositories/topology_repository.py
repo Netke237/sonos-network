@@ -670,6 +670,7 @@ class SqlAlchemyTopologyRepository:
                 survey_slug=survey_slug,
                 label=payload.label or "Manual Room Wi-Fi Survey",
                 trigger_mode=payload.trigger_mode,
+                captured_at=payload.captured_at,
                 connected_bssid=payload.connected_bssid,
                 connected_ssid=payload.connected_ssid,
                 link_speed_mbps=payload.link_speed_mbps,

@@ -53,10 +53,15 @@ The Android application is organized into 4 deep modules, each exposing a minima
   - **Single-Shot 2-Sample Probe**: Triggers a back-to-back 2-sample probe spaced 1.5s apart, averaging RSSI values to suppress momentary Rayleigh multipath fading spikes.
   - Abides strictly by Android 10+ 4-scan/2-minute throttling without requiring developer mode tweaks.
   - **802.11 Frequency & Channel Mapping**:
-    - $2412 - 2472\text{ MHz} \implies \text{Ch } (f - 2407) / 5$ (`2.4GHz`, 20 MHz).
-    - $5180 - 5240\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (UNII-1, e.g. $5220\text{ MHz} \implies \text{Ch } 44$, $5200\text{ MHz} \implies \text{Ch } 40$).
-    - $5260 - 5320\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (UNII-2A DFS).
-    - $5500 - 5720\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (UNII-2C DFS).
+    - **2.4 GHz**: $2412 - 2472\text{ MHz} \implies \text{Ch } (f - 2407) / 5$ (Channels 1–13, 20 MHz); $2484\text{ MHz} \implies \text{Ch } 14$.
+    - **5 GHz UNII-1**: $5180 - 5240\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (e.g. $5220\text{ MHz} \implies \text{Ch } 44$, $5200\text{ MHz} \implies \text{Ch } 40$).
+    - **5 GHz UNII-2A DFS**: $5260 - 5320\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (Channels 52–64).
+    - **5 GHz UNII-2C DFS**: $5500 - 5720\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (Channels 100–144).
+    - **5 GHz UNII-3**: $5745 - 5825\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (Channels 149–165).
+    - **Channel Width & Center Channel**:
+      - Primary control channel: mapped from `ScanResult.frequency`.
+      - Center frequency: mapped from `ScanResult.centerFreq0` (if $> 0$ converted to center channel, else falling back to primary `channel`).
+      - Channel width: mapped from `ScanResult.channelWidth` (`CHANNEL_WIDTH_20MHZ` $\to 20$, `CHANNEL_WIDTH_40MHZ` $\to 40$, `CHANNEL_WIDTH_80MHZ` $\to 80$, `CHANNEL_WIDTH_160MHZ` $\to 160$).
   - **BSSID Normalization & Client Classification**:
     - `OWN_MANAGED_AP`: Matches lower 5 octets `:4C:BC:76:7C:40/41` (`Galerie AP`) or `:4C:BC:76:94:C0/C1` (`Kitchen AP`).
     - `SONOSNET_MESH`: Matches registered SonosNet BSSIDs (`BaseMAC + 1`) and 5 GHz HT backhaul.
@@ -76,9 +81,9 @@ The Android application is organized into 4 deep modules, each exposing a minima
   ```
 - **Responsibilities & Mechanisms**:
   - Implemented via **Android Room SQLite** (`sonos_survey_cache.db`).
-  - Persists `PendingSurveyEntity` records containing `room_slug`, `timestamp`, `label`, `connected_bssid`, `link_speed_mbps`, and serialized JSON `readings`.
+  - Persists `PendingSurveyEntity` records containing `room_slug`, `timestamp` (ISO 8601), `label`, `connected_bssid`, `link_speed_mbps`, and serialized JSON `readings`.
   - Supports offline walkthroughs: when a room survey is captured without network connectivity, it is immediately enqueued locally with state `PENDING`.
-  - An auto-sync coordinator observes network reachability: once the Mini PC API is reachable, it drains the queue sequentially via `POST /api/rooms/{slug}/surveys` without losing survey timestamps or ordering.
+  - An auto-sync coordinator observes network reachability: once the Mini PC API is reachable, it drains the queue sequentially via `POST /api/rooms/{slug}/surveys` sending `captured_at = timestamp`, guaranteeing zero loss of survey timestamps or ordering.
 
 ### Module 3: `NetworkClientModule` (`SonosNetworkClientPort` & `ConnectivityPort`)
 - **Seam Protocol Interface**:
@@ -88,10 +93,10 @@ The Android application is organized into 4 deep modules, each exposing a minima
       suspend fun getTopology(layer: String?): Result<TopologyGraphDto>
       suspend fun getRoomSurveys(roomSlug: String): Result<List<WiFiRoomSurveyDto>>
       suspend fun submitRoomSurvey(roomSlug: String, payload: RoomSurveyInputDto): Result<WiFiRoomSurveyDto>
-      suspend fun flushGhostGroups(): Result<GhostFlushResultDto>
-      suspend fun pollNow(): Result<Unit>
+      suspend fun flushGhostGroups(zoneIps: List<String>? = null): Result<GhostFlushResultDto>
+      suspend fun pollNow(): Result<HouseholdSonosSnapshotDto>
       suspend fun pingSweep(): Result<PingSweepResultDto>
-      fun streamLiveRf(roomSlug: String): Flow<LiveRfSampleDto>
+      fun streamLiveRf(roomSlug: String): Flow<LiveRfFrameDto>
   }
 
   interface ConnectivityPort {
