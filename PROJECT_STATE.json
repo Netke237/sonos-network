@@ -1,7 +1,7 @@
 {
   "project": "sonos-network",
   "repo": "Netke237/sonos-network",
-  "active_phase": "PHASE-1.5-UX-REDESIGN",
+  "active_phase": "PHASE-2-ANDROID-APP",
   "audit_rule": {
     "max_rounds_per_stage": 3,
     "gate_criteria": [
@@ -96,15 +96,21 @@
           "outstanding": []
         }
       ]
+    },
+    {
+      "id": "PHASE-2-ANDROID-APP",
+      "title": "Native Android Room Scanner & Topology Companion App",
+      "status": "in_progress",
+      "branch": "board/phase-2-android-app-70ec5581",
+      "issue": 23,
+      "plan_audit_rounds": 0,
+      "plan_audit_clean": false,
+      "code_audit_rounds": 0,
+      "audit_clean": false,
+      "rounds": []
     }
   ],
   "task_backlog": {
-    "items": [
-      {
-        "id": "PHASE-2-ANDROID-APP",
-        "title": "Native Android Room Scanner & Topology Companion App",
-        "status": "backlog"
-      }
-    ]
+    "items": []
   }
 }
