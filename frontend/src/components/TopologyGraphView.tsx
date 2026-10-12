@@ -87,6 +87,32 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
   const canvasRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState<number>(1400);
 
+  // Draggable Card Positions with localStorage Persistence
+  const [customPositions, setCustomPositions] = useState<Record<string, { x: number; y: number }>>(() => {
+    try {
+      const saved = localStorage.getItem("sonos_topology_custom_positions");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const draggingNodeIdRef = useRef<string | null>(null);
+  const dragStartRef = useRef<{
+    pointerStartX: number;
+    pointerStartY: number;
+    nodeStartX: number;
+    nodeStartY: number;
+    hasMoved: boolean;
+  }>({
+    pointerStartX: 0,
+    pointerStartY: 0,
+    nodeStartX: 0,
+    nodeStartY: 0,
+    hasMoved: false,
+  });
+
   useEffect(() => {
     let active = true;
     const loadGraph = async () => {
@@ -292,6 +318,25 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
     return positions;
   }, [graphData, visibleNodes, containerWidth]);
 
+  // Effective Node Positions: Custom Dragged Position overrides default floor layout
+  const effectiveNodePositions = useMemo(() => {
+    const positions = new Map<string, { x: number; y: number }>();
+    dynamicNodePositions.forEach((pos, id) => {
+      if (customPositions[id]) {
+        positions.set(id, customPositions[id]);
+      } else {
+        positions.set(id, pos);
+      }
+    });
+    // Ensure any custom positions for nodes not in dynamicNodePositions are preserved
+    Object.entries(customPositions).forEach(([id, pos]) => {
+      if (!positions.has(id)) {
+        positions.set(id, pos);
+      }
+    });
+    return positions;
+  }, [dynamicNodePositions, customPositions]);
+
   // Edges filtered by current active layer, STP blocking flag, and floor visibility
   const visibleEdges: DeviceConnectionEdge[] = useMemo(() => {
     if (!graphData) return [];
@@ -441,8 +486,102 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
     setRightPanelTab("INSPECTOR");
   };
 
+  const handlePointerDown = (e: React.PointerEvent, nodeId: string) => {
+    // If clicking an interactive button or control inside the card, do not initiate drag
+    if ((e.target as HTMLElement).closest("button, a, input, select")) {
+      return;
+    }
+    const currentPos = effectiveNodePositions.get(nodeId) ?? { x: 0, y: 0 };
+    dragStartRef.current = {
+      pointerStartX: e.clientX,
+      pointerStartY: e.clientY,
+      nodeStartX: currentPos.x,
+      nodeStartY: currentPos.y,
+      hasMoved: false,
+    };
+    draggingNodeIdRef.current = nodeId;
+    setDraggingNodeId(nodeId);
+    if (typeof (e.currentTarget as HTMLElement).setPointerCapture === "function") {
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {
+        // ignore in test or unsupported envs
+      }
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent, nodeId: string) => {
+    if (draggingNodeIdRef.current !== nodeId) return;
+    const clientX = e.clientX ?? 0;
+    const clientY = e.clientY ?? 0;
+    const dx = clientX - dragStartRef.current.pointerStartX;
+    const dy = clientY - dragStartRef.current.pointerStartY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      dragStartRef.current.hasMoved = true;
+    }
+    if (dragStartRef.current.hasMoved) {
+      const newX = Math.max(10, Math.min(svgCanvasWidth - 215, dragStartRef.current.nodeStartX + dx));
+      const newY = Math.max(10, dragStartRef.current.nodeStartY + dy);
+      setCustomPositions((prev) => ({
+        ...prev,
+        [nodeId]: { x: newX, y: newY },
+      }));
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent, nodeId: string) => {
+    if (draggingNodeIdRef.current !== nodeId) return;
+    if (typeof (e.currentTarget as HTMLElement).releasePointerCapture === "function") {
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    }
+    const hasMoved = dragStartRef.current.hasMoved;
+    draggingNodeIdRef.current = null;
+    setDraggingNodeId(null);
+    if (hasMoved) {
+      const clientX = e.clientX ?? 0;
+      const clientY = e.clientY ?? 0;
+      const dx = clientX - dragStartRef.current.pointerStartX;
+      const dy = clientY - dragStartRef.current.pointerStartY;
+      const finalX = Math.max(10, Math.min(svgCanvasWidth - 215, dragStartRef.current.nodeStartX + dx));
+      const finalY = Math.max(10, dragStartRef.current.nodeStartY + dy);
+      setCustomPositions((prev) => {
+        const next = { ...prev, [nodeId]: { x: finalX, y: finalY } };
+        try {
+          localStorage.setItem("sonos_topology_custom_positions", JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+    } else {
+      // It was a click!
+      handleSelectNode(nodeId);
+    }
+  };
+
+  const handleResetPositions = () => {
+    setCustomPositions({});
+    try {
+      localStorage.removeItem("sonos_topology_custom_positions");
+    } catch {
+      // ignore
+    }
+  };
+
   const svgCanvasWidth = Math.max(containerWidth, 1300);
-  const svgCanvasHeight = 920;
+  const svgCanvasHeight = useMemo(() => {
+    let maxY = 920;
+    effectiveNodePositions.forEach((pos) => {
+      if (pos.y + 160 > maxY) {
+        maxY = pos.y + 160;
+      }
+    });
+    return maxY;
+  }, [effectiveNodePositions]);
 
   return (
     <section
@@ -488,25 +627,29 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setLayerFilter("WIFI_VLAN")}
+            onClick={() => setLayerFilter("WIRED_LAN")}
             style={{
-              backgroundColor: layerFilter === "WIFI_VLAN" ? "#7e22ce" : "#0f172a",
+              backgroundColor: layerFilter === "WIRED_LAN" ? "#0369a1" : "#0f172a",
               color: "#f8fafc",
-              border: "1px solid #a855f7",
+              border: "1px solid #38bdf8",
               borderRadius: "6px",
               padding: "6px 14px",
               fontSize: "0.82rem",
               fontWeight: 600,
               cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
             }}
           >
-            Wi-Fi &amp; VLAN Layer
+            <span style={{ display: "inline-block", width: "10px", height: "3px", backgroundColor: "#38bdf8", borderRadius: "1px" }} />
+            Wired LAN (Ethernet Cables)
           </button>
           <button
             type="button"
-            onClick={() => setLayerFilter("SONOS_STP")}
+            onClick={() => setLayerFilter("SONOS_MESH")}
             style={{
-              backgroundColor: layerFilter === "SONOS_STP" ? "#059669" : "#0f172a",
+              backgroundColor: layerFilter === "SONOS_MESH" ? "#059669" : "#0f172a",
               color: "#f8fafc",
               border: "1px solid #10b981",
               borderRadius: "6px",
@@ -514,13 +657,60 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
               fontSize: "0.82rem",
               fontWeight: 600,
               cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
             }}
           >
-            Sonos Mesh &amp; STP Layer
+            <span style={{ display: "inline-block", width: "10px", height: "3px", backgroundColor: "#10b981", borderRadius: "1px" }} />
+            Sonos Mesh &amp; STP (Wireless Audio)
+          </button>
+          <button
+            type="button"
+            onClick={() => setLayerFilter("WIFI_INFRA")}
+            style={{
+              backgroundColor: layerFilter === "WIFI_INFRA" ? "#7e22ce" : "#0f172a",
+              color: "#f8fafc",
+              border: "1px solid #a855f7",
+              borderRadius: "6px",
+              padding: "6px 14px",
+              fontSize: "0.82rem",
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            <span style={{ display: "inline-block", width: "10px", height: "3px", backgroundColor: "#a855f7", borderRadius: "1px" }} />
+            Wi-Fi Infrastructure (APs &amp; Clients)
           </button>
         </div>
 
         <div style={{ display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap" }}>
+          {Object.keys(customPositions).length > 0 && (
+            <button
+              type="button"
+              onClick={handleResetPositions}
+              style={{
+                backgroundColor: "#1e293b",
+                color: "#fca5a5",
+                border: "1px solid #ef4444",
+                borderRadius: "6px",
+                padding: "5px 12px",
+                fontSize: "0.78rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+              title="Reset all cards back to automatic floor grid"
+            >
+              ↺ Reset Card Positions ({Object.keys(customPositions).length} moved)
+            </button>
+          )}
+
           <label
             style={{
               display: "flex",
@@ -570,6 +760,51 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
               ))}
             </select>
           </label>
+        </div>
+      </div>
+
+      {/* Top Prominent Color Legend Bar */}
+      <div
+        data-testid="topology-color-legend-bar"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "16px",
+          padding: "10px 16px",
+          marginBottom: "14px",
+          backgroundColor: "#0b1329",
+          border: "1px solid #334155",
+          borderRadius: "8px",
+          fontSize: "0.78rem",
+          color: "#cbd5e1",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ fontWeight: 700, color: "#f8fafc" }}>🎨 Line Color Key:</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ display: "inline-block", width: "16px", height: "3px", backgroundColor: "#38bdf8", borderRadius: "1px" }} />
+          <span><strong style={{ color: "#38bdf8" }}>Cyan</strong> = Wired LAN (Ethernet Cable)</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ display: "inline-block", width: "16px", height: "3px", backgroundColor: "#10b981", borderRadius: "1px" }} />
+          <span><strong style={{ color: "#10b981" }}>Green</strong> = Sonos Wireless Mesh &amp; 5GHz HT Bonds</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ display: "inline-block", width: "16px", height: "3px", backgroundColor: "#a855f7", borderRadius: "1px" }} />
+          <span><strong style={{ color: "#a855f7" }}>Purple</strong> = Wi-Fi Infrastructure (APs &amp; Clients)</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ display: "inline-block", width: "16px", height: "2px", borderTop: "2px dashed #64748b" }} />
+          <span><strong style={{ color: "#94a3b8" }}>Dashed Gray</strong> = Standby / Blocked (STP 00)</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ display: "inline-block", width: "16px", height: "3px", backgroundColor: "#facc15", borderRadius: "1px" }} />
+          <span><strong style={{ color: "#facc15" }}>Yellow</strong> = Selected Device Active Path</span>
+        </div>
+        <div style={{ marginLeft: "auto", color: "#64748b", fontSize: "0.74rem", fontStyle: "italic", display: "flex", alignItems: "center", gap: "4px" }}>
+          <span>💡 <strong>Tip</strong>: Click and drag any card to position it anywhere!</span>
         </div>
       </div>
 
@@ -714,8 +949,8 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                     return null;
                   }
 
-                  const srcPos = dynamicNodePositions.get(src.id) ?? { x: src.x, y: src.y };
-                  const tgtPos = dynamicNodePositions.get(tgt.id) ?? { x: tgt.x, y: tgt.y };
+                  const srcPos = effectiveNodePositions.get(src.id) ?? { x: src.x, y: src.y };
+                  const tgtPos = effectiveNodePositions.get(tgt.id) ?? { x: tgt.x, y: tgt.y };
 
                   // Dynamic card center snapping
                   const x1 = srcPos.x + 102;
@@ -767,7 +1002,7 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
               {/* Interactive Device Nodes Layer — Full Width, Non-Overlapping */}
               <div style={{ position: "relative", width: "100%", height: `${svgCanvasHeight}px` }}>
                 {visibleNodes.map((node) => {
-                  const pos = dynamicNodePositions.get(node.id) ?? { x: node.x, y: node.y };
+                  const pos = effectiveNodePositions.get(node.id) ?? { x: node.x, y: node.y };
                   const gradeStyle = GRADE_STYLES[node.health_grade] ?? GRADE_STYLES.GOOD;
                   const roleStyle = ROLE_STYLES[node.device_role] ?? ROLE_STYLES.SONOS_PLAYER;
                   const isSelected = selectedNode?.id === node.id;
@@ -782,7 +1017,10 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                     <div
                       key={node.id}
                       data-testid={`topology-node-${node.id}`}
-                      onClick={() => handleSelectNode(node.id)}
+                      onPointerDown={(e) => handlePointerDown(e, node.id)}
+                      onPointerMove={(e) => handlePointerMove(e, node.id)}
+                      onPointerUp={(e) => handlePointerUp(e, node.id)}
+                      onPointerCancel={(e) => handlePointerUp(e, node.id)}
                       style={{
                         position: "absolute",
                         left: `${pos.x}px`,
@@ -798,15 +1036,19 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                           : `1.5px solid ${gradeStyle.border}`,
                         borderRadius: "8px",
                         padding: "8px 10px",
-                        cursor: "pointer",
-                        boxShadow: isSelected
+                        cursor: draggingNodeId === node.id ? "grabbing" : "grab",
+                        userSelect: "none",
+                        touchAction: "none",
+                        boxShadow: draggingNodeId === node.id
+                          ? "0 14px 28px rgba(0, 0, 0, 0.65), 0 0 16px rgba(56, 189, 248, 0.5)"
+                          : isSelected
                           ? "0 0 16px rgba(56, 189, 248, 0.4)"
                           : "0 4px 10px rgba(0, 0, 0, 0.35)",
-                        zIndex: isSelected ? 10 : 5,
-                        transition: "left 0.2s ease, top 0.2s ease, box-shadow 0.15s ease",
+                        zIndex: draggingNodeId === node.id ? 50 : isSelected ? 10 : 5,
+                        transition: draggingNodeId === node.id ? "none" : "box-shadow 0.15s ease",
                       }}
                     >
-                      {/* Role & Health Grade Badges */}
+                      {/* Role & Health Grade Badges + Drag Grip */}
                       <div
                         style={{
                           display: "flex",
@@ -816,18 +1058,31 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                           marginBottom: "4px",
                         }}
                       >
-                        <span
-                          style={{
-                            fontSize: "0.62rem",
-                            fontWeight: 700,
-                            padding: "1px 5px",
-                            borderRadius: "4px",
-                            backgroundColor: roleStyle.badgeBg,
-                            color: roleStyle.badgeText,
-                          }}
-                        >
-                          {roleStyle.label}
-                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          <span
+                            title="Drag to position card"
+                            style={{
+                              fontSize: "0.75rem",
+                              color: draggingNodeId === node.id ? "#38bdf8" : "#64748b",
+                              cursor: "grab",
+                              lineHeight: 1,
+                            }}
+                          >
+                            ⠿
+                          </span>
+                          <span
+                            style={{
+                              fontSize: "0.62rem",
+                              fontWeight: 700,
+                              padding: "1px 5px",
+                              borderRadius: "4px",
+                              backgroundColor: roleStyle.badgeBg,
+                              color: roleStyle.badgeText,
+                            }}
+                          >
+                            {roleStyle.label}
+                          </span>
+                        </div>
                         <span
                           style={{
                             fontSize: "0.62rem",

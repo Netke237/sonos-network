@@ -142,6 +142,8 @@ export interface RoomMatrixItem extends Room {
   wired_health_grade?: HealthGrade;
   active_diagnostics_count?: number;
   top_diagnostic_title?: string | null;
+  floor_slug?: string | null;
+  floor_name?: string | null;
   devices: NetworkDevice[];
   switch_ports: SwitchPort[];
 }

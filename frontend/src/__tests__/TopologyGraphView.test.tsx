@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "../App";
 
@@ -423,22 +423,40 @@ describe("T4 Interactive Dual Network Topology Graph View", () => {
     expect(screen.getByText(/Ch 6 · 47\/57 dB \(STP FORWARDING\)/i)).toBeInTheDocument();
     expect(screen.getByText(/Ch 6 · 54\/48 dB \(STP 00 BLOCKING\)/i)).toBeInTheDocument();
 
-    // Filter to Wi-Fi & VLAN Layer (WIFI_INFRA + WIRED_LAN) -> hides SONOS_MESH edges
+    // Verify prominent Color Legend Bar is displayed
+    const legendBar = screen.getByTestId("topology-color-legend-bar");
+    expect(legendBar).toBeInTheDocument();
+    expect(within(legendBar).getByText(/Cyan/i)).toBeInTheDocument();
+    expect(within(legendBar).getByText(/Green/i)).toBeInTheDocument();
+    expect(within(legendBar).getByText(/Purple/i)).toBeInTheDocument();
+
+    // 1. Filter to Wi-Fi Infrastructure (APs & Clients) -> only WIFI_INFRA edges visible
     const wifiLayerBtn = screen.getByRole("button", {
-      name: /Wi-Fi & VLAN Layer/i,
+      name: /Wi-Fi Infrastructure \(APs & Clients\)/i,
     });
     fireEvent.click(wifiLayerBtn);
     expect(screen.queryByText(/Ch 6 · 47\/57 dB \(STP FORWARDING\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Port 13 — VLAN 10, 100FD, STP Root Cost 0/i)).not.toBeInTheDocument();
     expect(screen.getByText(/5GHz Ch 44 -75 dBm \(1201 Mbps\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/Port 13 — VLAN 10, 100FD, STP Root Cost 0/i)).toBeInTheDocument();
 
-    // Filter to Sonos Mesh & STP Layer (SONOS_MESH + WIRED_LAN) -> shows SONOS_MESH, hides WIFI_INFRA
+    // 2. Filter to Wired LAN (Ethernet Cables) -> only WIRED_LAN edges visible
+    const wiredLayerBtn = screen.getByRole("button", {
+      name: /Wired LAN \(Ethernet Cables\)/i,
+    });
+    fireEvent.click(wiredLayerBtn);
+    expect(screen.getByText(/Port 13 — VLAN 10, 100FD, STP Root Cost 0/i)).toBeInTheDocument();
+    expect(screen.queryByText(/5GHz Ch 44 -75 dBm \(1201 Mbps\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ch 6 · 47\/57 dB \(STP FORWARDING\)/i)).not.toBeInTheDocument();
+
+    // 3. Filter to Sonos Mesh & STP (Wireless Audio) -> only SONOS_MESH edges visible
     const sonosLayerBtn = screen.getByRole("button", {
-      name: /Sonos Mesh & STP Layer/i,
+      name: /Sonos Mesh & STP \(Wireless Audio\)/i,
     });
     fireEvent.click(sonosLayerBtn);
     expect(screen.getByText(/Ch 6 · 47\/57 dB \(STP FORWARDING\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/5GHz Ch 48 HT Bond · 60\/66 dB/i)).toBeInTheDocument();
     expect(screen.queryByText(/5GHz Ch 44 -75 dBm \(1201 Mbps\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Port 13 — VLAN 10, 100FD, STP Root Cost 0/i)).not.toBeInTheDocument();
 
     // Toggle Hide Blocked STP Links (STP 00) -> hides BLOCKING edge
     const blockingToggle = screen.getByLabelText(/Show Blocked STP Links/i);
@@ -451,7 +469,8 @@ describe("T4 Interactive Dual Network Topology Graph View", () => {
 
     // Click on Wohnzimmer_Bookshelf node -> opens Node Detail Inspector Panel
     const rootNodeCard = screen.getByTestId("topology-node-sonos-wohnzimmer-bookshelf");
-    fireEvent.click(rootNodeCard);
+    fireEvent.pointerDown(rootNodeCard, { clientX: 100, clientY: 100 });
+    fireEvent.pointerUp(rootNodeCard, { clientX: 100, clientY: 100 });
 
     expect(
       await screen.findByRole("region", { name: /Topology Node Detail Panel/i })
@@ -467,5 +486,35 @@ describe("T4 Interactive Dual Network Topology Graph View", () => {
     ).not.toBeInTheDocument();
     // Cross-floor connection renders as explicit Uplink Anchor Badge instead of off-canvas line
     expect(screen.getByText(/▲ Uplink: Galerie EAP650 \(Obergeschoss\)/i)).toBeInTheDocument();
+  });
+
+  it("allows dragging cards to reposition them and resetting back to the floor grid", async () => {
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("Dachgeschoss")).toBeInTheDocument();
+    });
+
+    const graphTabBtn = screen.getByRole("button", {
+      name: /Interactive Network Topology Graph/i,
+    });
+    fireEvent.click(graphTabBtn);
+
+    const nodeCard = await screen.findByTestId("topology-node-router-fritzbox-6660");
+    expect(nodeCard).toBeInTheDocument();
+
+    // Drag the card by simulating pointerdown -> pointermove (dx=60, dy=60) -> pointerup
+    fireEvent.pointerDown(nodeCard, { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(nodeCard, { clientX: 160, clientY: 160 });
+    fireEvent.pointerUp(nodeCard, { clientX: 160, clientY: 160 });
+
+    // "Reset Card Positions" button should now be visible
+    const resetBtn = await screen.findByRole("button", {
+      name: /Reset Card Positions/i,
+    });
+    expect(resetBtn).toBeInTheDocument();
+
+    // Click Reset -> resets positions and removes the reset button
+    fireEvent.click(resetBtn);
+    expect(screen.queryByRole("button", { name: /Reset Card Positions/i })).not.toBeInTheDocument();
   });
 });
