@@ -50,6 +50,7 @@ const FLOOR_ZONES: FloorZone[] = [
 interface TopologyGraphViewProps {
   floors: FloorMatrixItem[];
   onInspectRoomSlug?: (roomSlug: string) => void;
+  onExplainRoomSlug?: (roomSlug: string) => void;
 }
 
 type PathCategoryFilter =
@@ -62,6 +63,7 @@ type PathCategoryFilter =
 export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
   floors,
   onInspectRoomSlug,
+  onExplainRoomSlug,
 }) => {
   const [graphData, setGraphData] = useState<TopologyGraphResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -161,7 +163,7 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
     const positions = new Map<string, { x: number; y: number }>();
     if (!graphData) return positions;
 
-    const width = Math.max(containerWidth, 1150);
+    const width = Math.max(containerWidth, 1300);
     const cardWidth = 205;
     const leftMargin = 50;
     const rightMargin = 50;
@@ -219,28 +221,54 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
         n.device_role === "WIFI_AP" ||
         n.slug.includes("bookshelf") ||
         n.slug.includes("beam") ||
+        n.slug.includes("buero") ||
         n.slug.includes("bueroccke") ||
         n.connection_mode === "ETHERNET_ROOT";
 
       const row1 = egNodes.filter(isRow1);
       const row2 = egNodes.filter((n) => !isRow1(n));
 
+      // Order Row 1 from left to right: Root Bookshelf -> Beam -> Büroecke -> Kitchen AP
+      const row1Sorted = [...row1].sort((a, b) => {
+        const order = (n: TopologyNode) => {
+          if (n.slug.includes("bookshelf")) return 1;
+          if (n.slug.includes("beam")) return 2;
+          if (n.slug.includes("buero")) return 3;
+          if (n.device_role === "WIFI_AP") return 4;
+          return 5;
+        };
+        return order(a) - order(b);
+      });
+
+      // Order Row 2 from left to right: Esstisch -> Buchregal -> Surround LR -> Surround RR -> Küche
+      const row2Sorted = [...row2].sort((a, b) => {
+        const order = (n: TopologyNode) => {
+          if (n.slug.includes("esstisch")) return 1;
+          if (n.slug.includes("buchregal")) return 2;
+          if (n.slug.includes("lr")) return 3;
+          if (n.slug.includes("rr")) return 4;
+          if (n.slug.includes("kueche") || n.slug.includes("küche")) return 5;
+          return 6;
+        };
+        return order(a) - order(b);
+      });
+
       // Row 1 distribution (y = 415)
       const stepRow1 =
-        row1.length > 1 ? (usableWidth - cardWidth) / (row1.length - 1) : 0;
-      row1.forEach((node, idx) => {
+        row1Sorted.length > 1 ? (usableWidth - cardWidth) / (row1Sorted.length - 1) : 0;
+      row1Sorted.forEach((node, idx) => {
         positions.set(node.id, {
-          x: leftMargin + (row1.length === 1 ? (usableWidth - cardWidth) / 2 : idx * stepRow1),
+          x: leftMargin + (row1Sorted.length === 1 ? (usableWidth - cardWidth) / 2 : idx * stepRow1),
           y: 415,
         });
       });
 
       // Row 2 distribution (y = 550)
       const stepRow2 =
-        row2.length > 1 ? (usableWidth - cardWidth) / (row2.length - 1) : 0;
-      row2.forEach((node, idx) => {
+        row2Sorted.length > 1 ? (usableWidth - cardWidth) / (row2Sorted.length - 1) : 0;
+      row2Sorted.forEach((node, idx) => {
         positions.set(node.id, {
-          x: leftMargin + (row2.length === 1 ? (usableWidth - cardWidth) / 2 : idx * stepRow2),
+          x: leftMargin + (row2Sorted.length === 1 ? (usableWidth - cardWidth) / 2 : idx * stepRow2),
           y: 550,
         });
       });
@@ -413,7 +441,7 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
     setRightPanelTab("INSPECTOR");
   };
 
-  const svgCanvasWidth = Math.max(containerWidth, 1150);
+  const svgCanvasWidth = Math.max(containerWidth, 1300);
   const svgCanvasHeight = 920;
 
   return (
@@ -1164,6 +1192,31 @@ export const TopologyGraphView: React.FC<TopologyGraphViewProps> = ({
                           </div>
                         )}
                       </div>
+
+                      {selectedNode.room_slug && onExplainRoomSlug && (
+                        <button
+                          type="button"
+                          onClick={() => onExplainRoomSlug(selectedNode.room_slug!)}
+                          style={{
+                            width: "100%",
+                            backgroundColor: "#ca8a04",
+                            color: "#000000",
+                            border: "none",
+                            borderRadius: "6px",
+                            padding: "8px 12px",
+                            fontSize: "0.8rem",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            marginBottom: "8px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "6px",
+                          }}
+                        >
+                          💡 Explain &amp; Fix ({selectedNode.room_name})
+                        </button>
+                      )}
 
                       {selectedNode.room_slug && onInspectRoomSlug && (
                         <button

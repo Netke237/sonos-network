@@ -20,6 +20,7 @@ import {
 import { TopologyGraphView } from "./components/TopologyGraphView";
 import { AniCleanlinessMeter } from "./components/AniCleanlinessMeter";
 import { LiveWaveformOscilloscope } from "./components/LiveWaveformOscilloscope";
+import { PlainLanguageAdvisorModal } from "./components/PlainLanguageAdvisorModal";
 import type {
   BssidClassification,
   ConnectionMode,
@@ -65,6 +66,7 @@ export default function App() {
   const [roomSurveys, setRoomSurveys] = useState<WiFiRoomSurvey[]>([]);
   const [selectedDiagnosticRoom, setSelectedDiagnosticRoom] = useState<RoomMatrixItem | null>(null);
   const [roomDiagnostics, setRoomDiagnostics] = useState<RoomDiagnosticSummary | null>(null);
+  const [advisorRoom, setAdvisorRoom] = useState<RoomMatrixItem | null>(null);
   const [loadingDiagnostics, setLoadingDiagnostics] = useState<boolean>(false);
   const [actionBanner, setActionBanner] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -1387,6 +1389,12 @@ export default function App() {
               void handleOpenRoomSurveys(targetRoom);
             }
           }}
+          onExplainRoomSlug={(roomSlug) => {
+            const targetRoom = allRooms.find((r) => r.slug === roomSlug);
+            if (targetRoom) {
+              setAdvisorRoom(targetRoom);
+            }
+          }}
         />
       ) : (
         /* Floor-by-Floor Room Matrix */
@@ -1433,13 +1441,11 @@ export default function App() {
                 return (
                   <article
                     key={room.id}
-                    onClick={() => void handleOpenRoomSurveys(room)}
                     style={{
                       backgroundColor: "#0f172a",
                       border: `1px solid ${gradeStyle.border}`,
                       borderRadius: "10px",
                       padding: "16px",
-                      cursor: "pointer",
                     }}
                   >
                     <div
@@ -1467,18 +1473,49 @@ export default function App() {
 
                     {room.top_diagnostic_title && (
                       <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAdvisorRoom(room);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setAdvisorRoom(room);
+                          }
+                        }}
                         style={{
                           backgroundColor: "#451a03",
                           color: "#fde047",
                           border: "1px solid #ca8a04",
                           borderRadius: "6px",
-                          padding: "4px 8px",
+                          padding: "6px 10px",
                           fontSize: "0.72rem",
                           marginBottom: "8px",
                           fontWeight: 500,
+                          cursor: "pointer",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: "8px",
                         }}
+                        title="Click to view plain-language root cause and recommended actions"
                       >
-                        ⚠️ {room.top_diagnostic_title}
+                        <span>⚠️ {room.top_diagnostic_title}</span>
+                        <span
+                          style={{
+                            backgroundColor: "#ca8a04",
+                            color: "#000000",
+                            padding: "2px 6px",
+                            borderRadius: "4px",
+                            fontSize: "0.68rem",
+                            fontWeight: 700,
+                            flexShrink: 0,
+                          }}
+                        >
+                          Explain &amp; Fix ➔
+                        </span>
                       </div>
                     )}
 
@@ -1731,9 +1768,32 @@ export default function App() {
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "center",
-                        gap: "8px",
+                        gap: "6px",
+                        flexWrap: "wrap",
                       }}
                     >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAdvisorRoom(room);
+                        }}
+                        style={{
+                          backgroundColor: "#ca8a04",
+                          color: "#000000",
+                          border: "none",
+                          borderRadius: "4px",
+                          padding: "4px 8px",
+                          fontSize: "0.72rem",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        💡 Explain &amp; Fix
+                      </button>
                       <button
                         type="button"
                         disabled={Boolean(busyAction)}
@@ -3211,6 +3271,14 @@ export default function App() {
           </form>
         </aside>
       )}
+
+      {/* Plain Language Room Health Advisor Modal */}
+      <PlainLanguageAdvisorModal
+        isOpen={Boolean(advisorRoom)}
+        room={advisorRoom}
+        onClose={() => setAdvisorRoom(null)}
+        onActionComplete={(msg) => setActionBanner(msg)}
+      />
     </div>
   );
 }
