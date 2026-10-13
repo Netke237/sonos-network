@@ -100,13 +100,13 @@
     {
       "id": "PHASE-2-ANDROID-APP",
       "title": "Native Android Room Scanner & Topology Companion App",
-      "status": "in_progress",
+      "status": "waiting-merge",
       "branch": "board/phase-2-android-app-70ec5581",
       "issue": 23,
       "plan_audit_rounds": 3,
       "plan_audit_clean": true,
-      "code_audit_rounds": 0,
-      "audit_clean": false,
+      "code_audit_rounds": 2,
+      "audit_clean": true,
       "rounds": [
         {
           "stage": "plan",
@@ -133,6 +133,24 @@
           "findings_count": 0,
           "findings": [],
           "fixes": "Verified all fixes and cross-document interactions clean. All 35 backend tests pass. Plan Gate Audit passed cleanly.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 1,
+          "reviewer": "71205116-b6fd-4086-9f97-b3d6829fe69c (Independent Code Gate Auditor)",
+          "findings_count": 6,
+          "findings": ["P2-CF-01", "P2-CF-02", "P2-CF-03", "P2-CF-04", "P2-CF-05", "P2-CF-06"],
+          "fixes": "Escalated threshold (>3 critical findings) to Kenneth and resolved all 6 findings in commit 273e8e1: P2-CF-01 (client_survey_id UUID in RoomSurveyInputDto, PendingSurveyEntity, SQLite schema, AutoSyncCoordinator, and WalkthroughViewModel for idempotent deduplication), P2-CF-02 (LiveRfFrameDto timestamp fallback & defaults for WebSocket frame ingestion), P2-CF-03 (DEFAULT_FIREWALLA_VPN_URL static IP 192.168.55.60:8001), P2-CF-04 (dynamic TopologyCanvasView live nodes, directed layer edges, STP states & tap interactions), P2-CF-05 (removed neverForLocation flag from NEARBY_WIFI_DEVICES), and P2-CF-06 (LocationManager.isLocationEnabled check).",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 2,
+          "reviewer": "743699f0-0436-40a2-8838-00ce36e789a1 (Independent Code Gate Auditor)",
+          "findings_count": 0,
+          "findings": [],
+          "fixes": "Verified all Round 1 fixes clean. All 45 Android unit tests, 35 backend tests, and 21 frontend tests pass. Code Gate Audit passed cleanly with 0 findings.",
           "outstanding": []
         }
       ]
