@@ -273,10 +273,11 @@ export async function fetchSurveyDelta(
 
 export async function fetchRoomHistory(
   roomSlug: string,
-  range = "24h"
+  range = "24h",
+  granularity = "auto"
 ): Promise<RoomHistoryResponse> {
   const resp = await fetch(
-    `${API_BASE}/api/rooms/${roomSlug}/history?range=${encodeURIComponent(range)}`
+    `${API_BASE}/api/rooms/${roomSlug}/history?range=${encodeURIComponent(range)}&granularity=${encodeURIComponent(granularity)}`
   );
   if (!resp.ok) {
     throw new Error(`Failed to load history for ${roomSlug}: ${resp.status}`);
@@ -301,5 +302,19 @@ export async function triggerDaemonCollect(): Promise<DaemonCollectResult> {
   }
   return resp.json();
 }
+
+export async function toggleDaemon(enabled: boolean): Promise<DaemonStatus> {
+  const resp = await fetch(
+    `${API_BASE}/api/daemon/toggle?enabled=${enabled}`,
+    {
+      method: "POST",
+    }
+  );
+  if (!resp.ok) {
+    throw new Error(`Failed to toggle daemon: ${resp.status}`);
+  }
+  return resp.json();
+}
+
 
 

@@ -72,6 +72,7 @@ const mockHistoryResponse = {
   room_slug: "nicolas",
   room_name: "Nicolas",
   time_range: "24h",
+  granularity: "auto",
   total_samples: 2,
   peak_ani: 2,
   avg_phy_error_rate: 1.5,
@@ -126,12 +127,29 @@ const mockHistoryResponse = {
       ],
     },
   ],
+  rollup_buckets: [
+    {
+      bucket_key: "2026-W41",
+      bucket_label: "Week 41 (Oct '26)",
+      granularity: "weekly",
+      start_date: "2026-10-11T14:00:00Z",
+      end_date: "2026-10-11T14:30:00Z",
+      sample_count: 2,
+      avg_ofdm_ani_level: 1.5,
+      peak_ofdm_ani_level: 2,
+      avg_phy_error_rate: 1.5,
+      peak_phy_error_rate: 2.0,
+      avg_ping_rtt_ms: 2.4,
+      worst_stp_path_cost: 0,
+      health_grade: "GOOD",
+    },
+  ],
 };
 
 const mockDaemonStatus = {
   is_running: true,
   interval_sec: 60.0,
-  retention_days: 7,
+  retention_days: 365,
   last_cycle_at: "2026-10-11T14:30:00Z",
   total_cycles: 42,
   last_error: null,
@@ -162,6 +180,17 @@ describe("T7 Room Historical Trends & 24/7 Daemon UI", () => {
           json: () => Promise.resolve(mockDaemonStatus),
         });
       }
+      if (urlStr.includes("/api/daemon/toggle")) {
+        const isEnabling = urlStr.includes("enabled=true");
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              ...mockDaemonStatus,
+              is_running: isEnabling,
+            }),
+        });
+      }
       if (urlStr.includes("/api/daemon/collect-now")) {
         return Promise.resolve({
           ok: true,
@@ -181,7 +210,7 @@ describe("T7 Room Historical Trends & 24/7 Daemon UI", () => {
     });
   });
 
-  it("renders room Historical Trends button, opens the drawer, shows metrics, toggles range, and triggers daemon collection", async () => {
+  it("renders room Historical Trends button, opens the drawer, shows metrics, toggles range, and triggers daemon collection and switch", async () => {
     render(<App />);
 
     // Wait for overview load
@@ -190,7 +219,20 @@ describe("T7 Room Historical Trends & 24/7 Daemon UI", () => {
     });
 
     // Check daemon badge in header
-    expect(screen.getByText(/24\/7 Daemon: 60s/i)).toBeInTheDocument();
+    expect(screen.getByText(/24\/7 Daemon: Active \(60s\)/i)).toBeInTheDocument();
+
+    // Toggle daemon switch OFF
+    const daemonToggleBtn = screen.getByRole("button", {
+      name: /Switch 24\/7 Daemon OFF/i,
+    });
+    fireEvent.click(daemonToggleBtn);
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/daemon/toggle?enabled=false"),
+        expect.anything()
+      );
+    });
 
     // Trigger daemon collection from header
     const daemonBtn = screen.getByRole("button", {
@@ -220,13 +262,13 @@ describe("T7 Room Historical Trends & 24/7 Daemon UI", () => {
     expect(
       screen.getByText("Room Historical Trends: Nicolas")
     ).toBeInTheDocument();
-    expect(screen.getAllByText("ANI 2").length).toBeGreaterThan(0);
-    expect(screen.getByText("1.5 err/s")).toBeInTheDocument();
-    expect(screen.getByText("2.4 ms")).toBeInTheDocument();
+    expect(screen.getAllByText(/ANI 2/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/1.5 err\/s/i)).toBeInTheDocument();
+    expect(screen.getByText(/2.4 ms/i)).toBeInTheDocument();
     expect(screen.getByText(/Captured 2 snapshot\(s\) for Nicolas over 24h/i)).toBeInTheDocument();
 
     // Change range to 7d
-    const range7dBtn = screen.getByRole("button", { name: "7d" });
+    const range7dBtn = screen.getAllByRole("button", { name: "7d" })[0];
     fireEvent.click(range7dBtn);
 
     await waitFor(() => {

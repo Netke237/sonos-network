@@ -15,6 +15,7 @@ import {
   flushGhostGroups,
   pollLiveSonosNow,
   runPingSweep,
+  toggleDaemon,
   triggerDaemonCollect,
 } from "./api/topologyApi";
 import { TopologyGraphView } from "./components/TopologyGraphView";
@@ -22,6 +23,7 @@ import { AniCleanlinessMeter } from "./components/AniCleanlinessMeter";
 import { LiveWaveformOscilloscope } from "./components/LiveWaveformOscilloscope";
 import { PlainLanguageAdvisorModal } from "./components/PlainLanguageAdvisorModal";
 import { InstallModal } from "./components/InstallModal";
+import { YearlyHistoricalVisualizer } from "./components/YearlyHistoricalVisualizer";
 import type {
   BssidClassification,
   ConnectionMode,
@@ -89,7 +91,9 @@ export default function App() {
   // T7 Historical Trends & Daemon State
   const [selectedHistoryRoom, setSelectedHistoryRoom] = useState<RoomMatrixItem | null>(null);
   const [roomHistory, setRoomHistory] = useState<RoomHistoryResponse | null>(null);
-  const [historyRange, setHistoryRange] = useState<"1h" | "24h" | "7d">("24h");
+  const [historyRange, setHistoryRange] = useState<
+    "1h" | "24h" | "7d" | "30d" | "90d" | "1y"
+  >("24h");
   const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
 
@@ -154,7 +158,7 @@ export default function App() {
 
   const handleOpenRoomHistory = async (
     room: RoomMatrixItem,
-    range: "1h" | "24h" | "7d" = "24h"
+    range: "1h" | "24h" | "7d" | "30d" | "90d" | "1y" = "24h"
   ) => {
     setSelectedHistoryRoom(room);
     setHistoryRange(range);
@@ -173,7 +177,9 @@ export default function App() {
     }
   };
 
-  const handleChangeHistoryRange = async (range: "1h" | "24h" | "7d") => {
+  const handleChangeHistoryRange = async (
+    range: "1h" | "24h" | "7d" | "30d" | "90d" | "1y"
+  ) => {
     setHistoryRange(range);
     if (selectedHistoryRoom) {
       setBusyAction(`history-range-${range}`);
@@ -191,6 +197,31 @@ export default function App() {
         setBusyAction(null);
         setBusyMessage(null);
       }
+    }
+  };
+
+  const handleToggleDaemon = async () => {
+    const isCurrentlyRunning = daemonStatus?.is_running !== false;
+    const targetState = !isCurrentlyRunning;
+    setBusyAction("daemon-toggle");
+    setBusyMessage(
+      targetState
+        ? "Starting 24/7 background telemetry daemon..."
+        : "Switching OFF 24/7 background telemetry daemon..."
+    );
+    try {
+      const updated = await toggleDaemon(targetState);
+      setDaemonStatus(updated);
+      setActionBanner(
+        targetState
+          ? "🟢 24/7 Background Telemetry Daemon started (logging active every 60s)."
+          : "🔴 24/7 Background Telemetry Daemon switched OFF (paused/idle)."
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to toggle daemon");
+    } finally {
+      setBusyAction(null);
+      setBusyMessage(null);
     }
   };
 
@@ -667,6 +698,83 @@ export default function App() {
           </button>
           <button
             type="button"
+            role="button"
+            aria-label={
+              daemonStatus?.is_running !== false
+                ? "Switch 24/7 Daemon OFF"
+                : "Switch 24/7 Daemon ON"
+            }
+            disabled={Boolean(busyAction)}
+            onClick={() => void handleToggleDaemon()}
+            style={{
+              backgroundColor:
+                daemonStatus?.is_running !== false ? "#dc2626" : "#16a34a",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 14px",
+              fontWeight: 700,
+              cursor: busyAction ? "not-allowed" : "pointer",
+              opacity:
+                busyAction && busyAction !== "daemon-toggle" ? 0.65 : 1,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              boxShadow:
+                daemonStatus?.is_running !== false
+                  ? "0 0 10px rgba(220, 38, 38, 0.4)"
+                  : "0 0 10px rgba(22, 163, 74, 0.4)",
+            }}
+          >
+            {busyAction === "daemon-toggle" ? (
+              <span
+                style={{
+                  display: "inline-block",
+                  animation: "sonosSpin 1.5s linear infinite",
+                }}
+              >
+                ⏳
+              </span>
+            ) : null}
+            {daemonStatus?.is_running !== false
+              ? "⏸️ Switch Daemon OFF"
+              : "▶️ Switch Daemon ON"}
+          </button>
+          <span
+            role="status"
+            style={{
+              backgroundColor:
+                daemonStatus?.is_running !== false ? "#064e3b" : "#451a03",
+              border:
+                daemonStatus?.is_running !== false
+                  ? "1px solid #10b981"
+                  : "1px solid #f59e0b",
+              color: daemonStatus?.is_running !== false ? "#6ee7b7" : "#fde68a",
+              padding: "6px 10px",
+              borderRadius: "6px",
+              fontSize: "0.78rem",
+              fontWeight: 700,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            <span
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                backgroundColor:
+                  daemonStatus?.is_running !== false ? "#10b981" : "#f59e0b",
+                display: "inline-block",
+              }}
+            />
+            {daemonStatus?.is_running !== false
+              ? `24/7 Daemon: Active (${daemonStatus?.interval_sec ?? 60}s)`
+              : "24/7 Daemon: OFF (Idle)"}
+          </span>
+          <button
+            type="button"
             disabled={Boolean(busyAction)}
             onClick={() => void handleTriggerDaemonCollect()}
             style={{
@@ -695,20 +803,6 @@ export default function App() {
             )}
             Run 24/7 Daemon Cycle{busyAction === "daemon-cycle" ? " (Running...)" : ""}
           </button>
-          <span
-            role="status"
-            style={{
-              backgroundColor: "#064e3b",
-              border: "1px solid #10b981",
-              color: "#6ee7b7",
-              padding: "6px 10px",
-              borderRadius: "6px",
-              fontSize: "0.78rem",
-              fontWeight: 700,
-            }}
-          >
-            24/7 Daemon: {daemonStatus?.interval_sec ? `${daemonStatus.interval_sec}s` : "60s"}
-          </span>
           <button
             type="button"
             onClick={() => setCrudOpen((prev) => !prev)}
@@ -2448,7 +2542,7 @@ export default function App() {
 
             <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
               <div style={{ display: "flex", gap: "4px" }}>
-                {(["1h", "24h", "7d"] as const).map((r) => (
+                {(["1h", "24h", "7d", "30d", "90d", "1y"] as const).map((r) => (
                   <button
                     key={r}
                     type="button"
@@ -2479,7 +2573,7 @@ export default function App() {
                         ⏳
                       </span>
                     )}
-                    {r}
+                    {r === "1y" ? "365d (1y)" : r}
                   </button>
                 ))}
               </div>
@@ -2507,117 +2601,6 @@ export default function App() {
 
           {roomHistory && (
             <div>
-              {/* Metric KPI cards */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                  gap: "12px",
-                  marginBottom: "16px",
-                }}
-              >
-                <div
-                  style={{
-                    backgroundColor: "#0f172a",
-                    padding: "12px",
-                    borderRadius: "8px",
-                    border: "1px solid #334155",
-                  }}
-                >
-                  <div style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
-                    PEAK OFDM ANI
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "1.4rem",
-                      fontWeight: 700,
-                      color:
-                        roomHistory.peak_ani && roomHistory.peak_ani >= 7
-                          ? "#ef4444"
-                          : "#38bdf8",
-                    }}
-                  >
-                    {roomHistory.peak_ani !== null &&
-                    roomHistory.peak_ani !== undefined
-                      ? `ANI ${roomHistory.peak_ani}`
-                      : "N/A"}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    backgroundColor: "#0f172a",
-                    padding: "12px",
-                    borderRadius: "8px",
-                    border: "1px solid #334155",
-                  }}
-                >
-                  <div style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
-                    AVG PHY ERROR RATE
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "1.4rem",
-                      fontWeight: 700,
-                      color:
-                        roomHistory.avg_phy_error_rate &&
-                        roomHistory.avg_phy_error_rate > 100
-                          ? "#ef4444"
-                          : "#10b981",
-                    }}
-                  >
-                    {roomHistory.avg_phy_error_rate !== null &&
-                    roomHistory.avg_phy_error_rate !== undefined
-                      ? `${roomHistory.avg_phy_error_rate} err/s`
-                      : "0.0 err/s"}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    backgroundColor: "#0f172a",
-                    padding: "12px",
-                    borderRadius: "8px",
-                    border: "1px solid #334155",
-                  }}
-                >
-                  <div style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
-                    AVG PING RTT
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "1.4rem",
-                      fontWeight: 700,
-                      color: "#38bdf8",
-                    }}
-                  >
-                    {roomHistory.avg_ping_rtt_ms !== null &&
-                    roomHistory.avg_ping_rtt_ms !== undefined
-                      ? `${roomHistory.avg_ping_rtt_ms} ms`
-                      : "N/A"}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    backgroundColor: "#0f172a",
-                    padding: "12px",
-                    borderRadius: "8px",
-                    border: "1px solid #334155",
-                  }}
-                >
-                  <div style={{ color: "#94a3b8", fontSize: "0.72rem" }}>
-                    TOTAL SAMPLES
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "1.4rem",
-                      fontWeight: 700,
-                      color: "#f8fafc",
-                    }}
-                  >
-                    {roomHistory.total_samples}
-                  </div>
-                </div>
-              </div>
-
               {/* Narrative Summary */}
               <div
                 style={{
@@ -2633,103 +2616,13 @@ export default function App() {
                 {roomHistory.summary}
               </div>
 
-              {/* History Samples Timeline Table */}
-              <div style={{ overflowX: "auto" }}>
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: "0.78rem",
-                  }}
-                >
-                  <thead>
-                    <tr
-                      style={{
-                        background: "#0f172a",
-                        color: "#94a3b8",
-                        textAlign: "left",
-                      }}
-                    >
-                      <th style={{ padding: "8px" }}>Timestamp</th>
-                      <th style={{ padding: "8px" }}>Peak ANI</th>
-                      <th style={{ padding: "8px" }}>PHY Err/s</th>
-                      <th style={{ padding: "8px" }}>Ping RTT</th>
-                      <th style={{ padding: "8px" }}>5 GHz RSSI</th>
-                      <th style={{ padding: "8px" }}>STP Cost</th>
-                      <th style={{ padding: "8px" }}>Health Grade</th>
-                      <th style={{ padding: "8px" }}>Players</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {roomHistory.samples.map((pt, idx) => (
-                      <tr
-                        key={idx}
-                        style={{ borderBottom: "1px solid #334155" }}
-                      >
-                        <td style={{ padding: "8px", color: "#94a3b8" }}>
-                          {pt.timestamp}
-                        </td>
-                        <td
-                          style={{
-                            padding: "8px",
-                            fontWeight: 700,
-                            color:
-                              pt.peak_ofdm_ani_level &&
-                              pt.peak_ofdm_ani_level >= 7
-                                ? "#ef4444"
-                                : "#f8fafc",
-                          }}
-                        >
-                          {pt.peak_ofdm_ani_level !== null &&
-                          pt.peak_ofdm_ani_level !== undefined
-                            ? `ANI ${pt.peak_ofdm_ani_level}`
-                            : "N/A"}
-                        </td>
-                        <td style={{ padding: "8px" }}>
-                          {pt.total_phy_error_rate !== null &&
-                          pt.total_phy_error_rate !== undefined
-                            ? `${pt.total_phy_error_rate} err/s`
-                            : "-"}
-                        </td>
-                        <td style={{ padding: "8px" }}>
-                          {pt.avg_ping_rtt_ms !== null &&
-                          pt.avg_ping_rtt_ms !== undefined
-                            ? `${pt.avg_ping_rtt_ms} ms`
-                            : "-"}
-                        </td>
-                        <td style={{ padding: "8px" }}>
-                          {pt.best_5ghz_dbm !== null &&
-                          pt.best_5ghz_dbm !== undefined
-                            ? `${pt.best_5ghz_dbm} dBm`
-                            : "-"}
-                        </td>
-                        <td style={{ padding: "8px" }}>
-                          {pt.worst_stp_path_cost !== null &&
-                          pt.worst_stp_path_cost !== undefined
-                            ? pt.worst_stp_path_cost
-                            : "-"}
-                        </td>
-                        <td style={{ padding: "8px" }}>
-                          <span
-                            style={{
-                              backgroundColor: "#1e3a8a",
-                              padding: "2px 6px",
-                              borderRadius: "4px",
-                            }}
-                          >
-                            {pt.health_grade}
-                          </span>
-                        </td>
-                        <td style={{ padding: "8px", color: "#cbd5e1" }}>
-                          {pt.players
-                            .map((p) => `${p.zone_name} (${p.connection_mode})`)
-                            .join(", ") || "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              {/* Yearly & Weekly Graphical Historical Visualizer */}
+              <YearlyHistoricalVisualizer
+                roomHistory={roomHistory}
+                currentRange={historyRange}
+                onRangeChange={handleChangeHistoryRange}
+                busy={Boolean(busyAction)}
+              />
             </div>
           )}
         </section>

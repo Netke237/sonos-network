@@ -174,3 +174,50 @@ async def test_daemon_status_and_collect_now_endpoints(test_app):
             assert collect_data["status"] == "ok"
             assert collect_data["total_players"] == 14
             assert "batch_id" in collect_data
+
+
+@pytest.mark.asyncio
+async def test_get_room_history_yearly_and_rollup_buckets(test_app):
+    """T7 Seam: GET /api/rooms/{room_slug}/history with range=1y/30d/90d supports weekly/monthly rollups."""
+    async with test_app.router.lifespan_context(test_app):
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            resp_1y = await client.get("/api/rooms/nicolas/history?range=1y&granularity=monthly")
+            assert resp_1y.status_code == 200
+            data_1y = resp_1y.json()
+            assert data_1y["time_range"] == "1y"
+            assert data_1y["granularity"] == "monthly"
+            assert "rollup_buckets" in data_1y
+            assert isinstance(data_1y["rollup_buckets"], list)
+            if data_1y["rollup_buckets"]:
+                b = data_1y["rollup_buckets"][0]
+                assert "bucket_key" in b
+                assert "bucket_label" in b
+                assert "start_date" in b
+                assert "end_date" in b
+                assert "sample_count" in b
+                assert "health_grade" in b
+
+            resp_30d = await client.get("/api/rooms/nicolas/history?range=30d&granularity=weekly")
+            assert resp_30d.status_code == 200
+            data_30d = resp_30d.json()
+            assert data_30d["time_range"] == "30d"
+            assert data_30d["granularity"] == "weekly"
+
+
+@pytest.mark.asyncio
+async def test_daemon_toggle_endpoint(test_app):
+    """T7 Seam: POST /api/daemon/toggle?enabled=false/true toggles the background daemon state."""
+    async with test_app.router.lifespan_context(test_app):
+        transport = ASGITransport(app=test_app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            # Toggle OFF
+            off_resp = await client.post("/api/daemon/toggle?enabled=false")
+            assert off_resp.status_code == 200
+            assert off_resp.json()["is_running"] is False
+
+            # Toggle ON
+            on_resp = await client.post("/api/daemon/toggle?enabled=true")
+            assert on_resp.status_code == 200
+            assert on_resp.json()["is_running"] is True
+

@@ -764,17 +764,35 @@ class RoomHistoryPointSchema(BaseModel):
     players: list[PlayerHistorySampleSchema] = []
 
 
+class RoomHistoryRollupBucketSchema(BaseModel):
+    bucket_key: str  # e.g. "2026-W41" or "2026-10"
+    bucket_label: str  # e.g. "Week 41 (Oct '26)" or "Oct 2026"
+    granularity: str  # "weekly" or "monthly"
+    start_date: datetime
+    end_date: datetime
+    sample_count: int
+    avg_ofdm_ani_level: float | None = None
+    peak_ofdm_ani_level: int | None = None
+    avg_phy_error_rate: float | None = None
+    peak_phy_error_rate: float | None = None
+    avg_ping_rtt_ms: float | None = None
+    worst_stp_path_cost: int | None = None
+    health_grade: str = "GOOD"
+
+
 class RoomHistoryResponseSchema(BaseModel):
     room_id: str
     room_slug: str
     room_name: str
     time_range: str
+    granularity: str = "raw"
     total_samples: int
     peak_ani: int | None = None
     avg_phy_error_rate: float | None = None
     avg_ping_rtt_ms: float | None = None
     summary: str
     samples: list[RoomHistoryPointSchema] = []
+    rollup_buckets: list[RoomHistoryRollupBucketSchema] = []
 
 
 class DaemonStatusSchema(BaseModel):

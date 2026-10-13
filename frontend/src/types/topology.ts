@@ -529,17 +529,35 @@ export interface RoomHistoryPoint {
   players: PlayerHistorySample[];
 }
 
+export interface RoomHistoryRollupBucket {
+  bucket_key: string;
+  bucket_label: string;
+  granularity: string;
+  start_date: string;
+  end_date: string;
+  sample_count: number;
+  avg_ofdm_ani_level?: number | null;
+  peak_ofdm_ani_level?: number | null;
+  avg_phy_error_rate?: number | null;
+  peak_phy_error_rate?: number | null;
+  avg_ping_rtt_ms?: number | null;
+  worst_stp_path_cost?: number | null;
+  health_grade: string;
+}
+
 export interface RoomHistoryResponse {
   room_id: string;
   room_slug: string;
   room_name: string;
   time_range: string;
+  granularity: string;
   total_samples: number;
   peak_ani?: number | null;
   avg_phy_error_rate?: number | null;
   avg_ping_rtt_ms?: number | null;
   summary: string;
   samples: RoomHistoryPoint[];
+  rollup_buckets: RoomHistoryRollupBucket[];
 }
 
 export interface DaemonStatus {

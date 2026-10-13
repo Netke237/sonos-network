@@ -45,6 +45,7 @@ from app.schemas.topology import (
     RoomDiagnosticSummarySchema,
     RoomHistoryPointSchema,
     RoomHistoryResponseSchema,
+    RoomHistoryRollupBucketSchema,
     RoomMatrixItemDto,
     RoomRead,
     RoomUpdate,
@@ -1443,7 +1444,7 @@ class SqlAlchemyTopologyRepository:
         )
 
     async def prune_expired_telemetry(
-        self, retention_days: int = 7, consumer_id: str = "background-60s"
+        self, retention_days: int = 365, consumer_id: str = "background-60s"
     ) -> int:
         """Prunes raw telemetry snapshots older than retention threshold for background collector."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
@@ -1460,7 +1461,10 @@ class SqlAlchemyTopologyRepository:
         return int(res.rowcount or 0)
 
     async def get_room_history(
-        self, room_slug_or_id: str, time_range: str = "24h"
+        self,
+        room_slug_or_id: str,
+        time_range: str = "24h",
+        granularity: str = "auto",
     ) -> RoomHistoryResponseSchema | None:
         """Queries and aggregates historical time-series telemetry for a specific room."""
         room = await self.get_room_by_slug_or_id(room_slug_or_id)
@@ -1472,6 +1476,13 @@ class SqlAlchemyTopologyRepository:
             cutoff = now - timedelta(hours=1)
         elif time_range == "7d":
             cutoff = now - timedelta(days=7)
+        elif time_range == "30d":
+            cutoff = now - timedelta(days=30)
+        elif time_range == "90d":
+            cutoff = now - timedelta(days=90)
+        elif time_range in ("365d", "1y"):
+            time_range = "1y"
+            cutoff = now - timedelta(days=365)
         else:
             time_range = "24h"
             cutoff = now - timedelta(hours=24)
@@ -1569,6 +1580,92 @@ class SqlAlchemyTopologyRepository:
         avg_phy = round(sum(all_phy_rates) / len(all_phy_rates), 1) if all_phy_rates else None
         avg_ping = round(sum(all_pings) / len(all_pings), 1) if all_pings else None
 
+        # Determine effective granularity
+        if granularity == "auto":
+            if time_range in ("365d", "1y"):
+                effective_granularity = "monthly"
+            elif time_range in ("30d", "90d"):
+                effective_granularity = "weekly"
+            else:
+                effective_granularity = "raw"
+        elif granularity in ("weekly", "monthly", "raw"):
+            effective_granularity = granularity
+        else:
+            effective_granularity = "raw"
+
+        # Compute rollup buckets for weekly or monthly view
+        rollup_buckets: list[RoomHistoryRollupBucketSchema] = []
+        target_gran = (
+            effective_granularity
+            if effective_granularity in ("weekly", "monthly")
+            else ("weekly" if time_range in ("30d", "90d", "365d", "1y") else None)
+        )
+
+        if target_gran is not None and points:
+            buckets_map: dict[str, list[RoomHistoryPointSchema]] = {}
+            for pt in points:
+                if target_gran == "monthly":
+                    b_key = pt.timestamp.strftime("%Y-%m")
+                else:
+                    iso = pt.timestamp.isocalendar()
+                    b_key = f"{iso.year}-W{iso.week:02d}"
+                buckets_map.setdefault(b_key, []).append(pt)
+
+            for b_key, b_points in buckets_map.items():
+                b_start = min(p.timestamp for p in b_points)
+                b_end = max(p.timestamp for p in b_points)
+                b_anis = [p.peak_ofdm_ani_level for p in b_points if p.peak_ofdm_ani_level is not None]
+                b_phys = [p.total_phy_error_rate for p in b_points if p.total_phy_error_rate is not None]
+                b_pings = [p.avg_ping_rtt_ms for p in b_points if p.avg_ping_rtt_ms is not None]
+                b_stps = [p.worst_stp_path_cost for p in b_points if p.worst_stp_path_cost is not None]
+
+                b_peak_ani = max(b_anis) if b_anis else None
+                b_avg_ani = round(sum(b_anis) / len(b_anis), 1) if b_anis else None
+                b_peak_phy = max(b_phys) if b_phys else None
+                b_avg_phy = round(sum(b_phys) / len(b_phys), 1) if b_phys else None
+                b_avg_ping = round(sum(b_pings) / len(b_pings), 1) if b_pings else None
+                b_worst_stp = max(b_stps) if b_stps else None
+
+                # Grade bucket
+                if (b_peak_ani and b_peak_ani >= 7) or (b_peak_phy and b_peak_phy > 100.0) or (b_worst_stp and b_worst_stp > 450):
+                    b_grade = "CRITICAL"
+                elif (b_peak_ani and b_peak_ani >= 4) or (b_avg_phy and b_avg_phy >= 20.0) or (b_worst_stp and b_worst_stp > 300):
+                    b_grade = "MARGINAL"
+                else:
+                    b_grade = "GOOD"
+
+                if target_gran == "monthly":
+                    b_label = b_start.strftime("%b %Y")
+                else:
+                    iso = b_start.isocalendar()
+                    b_label = f"W{iso.week:02d} ({b_start.strftime('%b %Y')})"
+
+                rollup_buckets.append(
+                    RoomHistoryRollupBucketSchema(
+                        bucket_key=b_key,
+                        bucket_label=b_label,
+                        granularity=target_gran,
+                        start_date=b_start,
+                        end_date=b_end,
+                        sample_count=len(b_points),
+                        avg_ofdm_ani_level=b_avg_ani,
+                        peak_ofdm_ani_level=b_peak_ani,
+                        avg_phy_error_rate=b_avg_phy,
+                        peak_phy_error_rate=b_peak_phy,
+                        avg_ping_rtt_ms=b_avg_ping,
+                        worst_stp_path_cost=b_worst_stp,
+                        health_grade=b_grade,
+                    )
+                )
+
+        # Downsample points if > 300 to keep JSON response fast
+        downsampled_samples = points
+        if len(points) > 300:
+            step = max(1, len(points) // 300)
+            downsampled_samples = points[::step]
+            if points[-1] not in downsampled_samples:
+                downsampled_samples.append(points[-1])
+
         summary = (
             f"Captured {len(points)} snapshot(s) for {room.name} over {time_range}. "
             f"Peak OFDM ANI: {peak_ani if peak_ani is not None else 'N/A'}, "
@@ -1581,12 +1678,14 @@ class SqlAlchemyTopologyRepository:
             room_slug=room.slug,
             room_name=room.name,
             time_range=time_range,
+            granularity=effective_granularity,
             total_samples=len(points),
             peak_ani=peak_ani,
             avg_phy_error_rate=avg_phy,
             avg_ping_rtt_ms=avg_ping,
             summary=summary,
-            samples=points,
+            samples=downsampled_samples,
+            rollup_buckets=rollup_buckets,
         )
 
 

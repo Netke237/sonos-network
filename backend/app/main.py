@@ -132,7 +132,7 @@ def create_app(
         wifi_adapter=default_wifi_adapter,
         auto_heal_coordinator=default_auto_heal_coordinator,
         interval_sec=float(os.getenv("BACKGROUND_POLL_INTERVAL_SEC", "60.0")),
-        retention_days=int(os.getenv("TELEMETRY_RETENTION_DAYS", "7")),
+        retention_days=int(os.getenv("TELEMETRY_RETENTION_DAYS", "365")),
         consumer_id="background-60s",
     )
 
@@ -601,10 +601,13 @@ def create_app(
     )
     async def get_room_history(
         room_slug: str,
-        range: str = Query("24h", pattern="^(1h|24h|7d)$"),
+        range: str = Query("24h", pattern="^(1h|24h|7d|30d|90d|365d|1y)$"),
+        granularity: str = Query("auto", pattern="^(auto|raw|weekly|monthly)$"),
         repo: SqlAlchemyTopologyRepository = Depends(get_repo),
     ) -> RoomHistoryResponseSchema:
-        history = await repo.get_room_history(room_slug, time_range=range)
+        history = await repo.get_room_history(
+            room_slug, time_range=range, granularity=granularity
+        )
         if not history:
             raise HTTPException(
                 status_code=404,
