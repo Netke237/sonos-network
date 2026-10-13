@@ -346,4 +346,37 @@ def test_watchdog_alert_remediation_guide_and_resolved_at():
         cleared=True,
     )
     assert cleared_alert.resolved_at is not None
+    assert cleared_alert.resolved_at == cleared_alert.detected_at
+
+
+def test_stp_root_unhealthy_without_rogue_mac_does_not_claim_usurpation():
+    """P3-R2-01: If is_root_healthy is False but designated root is legitimate, no usurpation alert is emitted."""
+    engine = WatchdogEngine()
+    root_player = _make_dummy_player("RINCON_ROOT", "Wohnzimmer_Bookshelf", "Wohnzimmer", designated_root="9000.542a1b63fe6e")
+    snap = _make_dummy_snapshot([root_player], is_root_healthy=False, designated_stp_root="9000.542a1b63fe6e")
+    alerts = engine.evaluate_snapshot(snap)
+    assert len(alerts) == 0
+
+
+def test_auto_heal_persistent_condition_resets_flag_and_realerts():
+    """P3-R2-02: If condition persists across poll cycles after auto-heal, auto_healed is reset and persistent alert emitted."""
+    from datetime import timedelta
+    engine = WatchdogEngine()
+    t0 = datetime(2026, 10, 13, 12, 0, 0, tzinfo=timezone.utc)
+    p = _make_dummy_player("RINCON_KUECHE", "Küche", "Küche", is_ghost_group=True)
+    snap0 = _make_dummy_snapshot([p], has_ghost_groups=True, ghost_group_zones=["Küche"], now=t0)
+    alerts0 = engine.evaluate_snapshot(snap0, now=t0)
+    assert len(alerts0) == 1
+    key = alerts0[0].incident_key
+    engine.record_auto_heal(key)
+    assert len(engine.get_active_incidents()) == 0
+
+    # Next cycle 60s later: condition persists
+    t1 = t0 + timedelta(seconds=60)
+    snap1 = _make_dummy_snapshot([p], has_ghost_groups=True, ghost_group_zones=["Küche"], now=t1)
+    alerts1 = engine.evaluate_snapshot(snap1, now=t1)
+    assert len(alerts1) == 1
+    assert "[PERSISTENT]" in alerts1[0].title
+    assert len(engine.get_active_incidents()) == 1
+    assert engine.get_status().is_healthy is False
 

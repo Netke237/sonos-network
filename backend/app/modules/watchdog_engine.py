@@ -38,7 +38,7 @@ class WatchdogAlert(BaseModel):
         if self.remediation_guide is None:
             self.remediation_guide = self.action_required
         if self.cleared and self.resolved_at is None:
-            self.resolved_at = datetime.now(timezone.utc)
+            self.resolved_at = self.detected_at
 
 
 class IncidentState(BaseModel):
@@ -164,14 +164,11 @@ class WatchdogEngine:
                     "action_required": "Trigger UPnP BecomeCoordinatorOfStandaloneGroup across affected zones.",
                 }
 
-        # 2. Evaluate STP Root Usurpation (P3-CF-02: always scan players for rogue root MAC)
+        # 2. Evaluate STP Root Usurpation
         root_mac_prefix = "9000.542a1b63fe6e"
         designated_root = snapshot.designated_stp_root.strip()
         is_usurped = False
         observed_root = designated_root
-
-        if snapshot.is_root_healthy is False or not designated_root.lower().startswith(root_mac_prefix):
-            is_usurped = True
 
         for p in snapshot.players:
             if p.designated_root and not p.designated_root.strip().lower().startswith(root_mac_prefix):
@@ -179,7 +176,11 @@ class WatchdogEngine:
                 observed_root = p.designated_root.strip()
                 break
 
-        if is_usurped:
+        if not designated_root.lower().startswith(root_mac_prefix):
+            is_usurped = True
+            observed_root = designated_root
+
+        if is_usurped and not observed_root.lower().startswith(root_mac_prefix):
             # Consolidate household into single incident key (P3-F-05)
             key = f"{WatchdogAnomalyType.STP_ROOT_USURPED.value}:household"
             current_detected[key] = {
@@ -234,16 +235,18 @@ class WatchdogEngine:
             if key in self._incidents and self._incidents[key].is_active:
                 inc = self._incidents[key]
                 inc.last_seen_at = current_time
-                elapsed = (current_time - inc.last_alerted_at).total_seconds()
-                if elapsed >= self.debounce_seconds:
-                    # Debounce interval expired: re-alert
+                if inc.auto_healed:
+                    # P3-R2-02: Previous auto-heal failed to clear the condition in hardware!
+                    # Reset auto_healed so it's not hidden from active faults,
+                    # and re-emit immediately so AutoHealCoordinator can retry or escalate.
+                    inc.auto_healed = False
                     inc.last_alerted_at = current_time
                     alert = WatchdogAlert(
                         incident_key=key,
                         anomaly_type=data["anomaly_type"],
                         severity=data["severity"],
-                        title=f"[REPEATING] {data['title']}",
-                        description=data["description"],
+                        title=f"[PERSISTENT] {data['title']}",
+                        description=f"{data['description']} (Auto-heal attempted but condition persists).",
                         action_required=data["action_required"],
                         entity_id=data["entity_id"],
                         detected_at=current_time,
@@ -251,6 +254,24 @@ class WatchdogEngine:
                     )
                     alerts_to_emit.append(alert)
                     self._history.append(alert)
+                else:
+                    elapsed = (current_time - inc.last_alerted_at).total_seconds()
+                    if elapsed >= self.debounce_seconds:
+                        # Debounce interval expired: re-alert
+                        inc.last_alerted_at = current_time
+                        alert = WatchdogAlert(
+                            incident_key=key,
+                            anomaly_type=data["anomaly_type"],
+                            severity=data["severity"],
+                            title=f"[REPEATING] {data['title']}",
+                            description=data["description"],
+                            action_required=data["action_required"],
+                            entity_id=data["entity_id"],
+                            detected_at=current_time,
+                            cleared=False,
+                        )
+                        alerts_to_emit.append(alert)
+                        self._history.append(alert)
             else:
                 # Brand new or reactivated incident
                 inc = IncidentState(
@@ -339,10 +360,25 @@ class AutoHealCoordinator:
                         if repo is not None:
                             # Atomic PostgreSQL synchronization (P3-F-02)
                             await repo.apply_ghost_flush(flush_res)
-                    self.watchdog_engine.record_auto_heal(alert.incident_key)
-                    alert.auto_healed = True
+                    zone_flushed = flush_res is not None and (
+                        alert.entity_id in flush_res.flushed_zones
+                        or any(
+                            r.zone_name == alert.entity_id and r.status in ("SANITIZED", "FLUSHED")
+                            for r in getattr(flush_res, "results", [])
+                        )
+                    )
+                    if zone_flushed:
+                        self.watchdog_engine.record_auto_heal(alert.incident_key)
+                        alert.auto_healed = True
+                    else:
+                        logger.warning(
+                            "Auto-heal flush did not sanitize zone %s; keeping alert active",
+                            alert.entity_id,
+                        )
+                        alert.auto_healed = False
                 except Exception as err:
                     logger.error("Auto-heal flush failed for zone %s: %s", alert.entity_id, err)
+                    alert.auto_healed = False
 
             if self.alert_channel is not None:
                 await self.alert_channel.send_alert(alert)

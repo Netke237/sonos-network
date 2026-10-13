@@ -170,3 +170,44 @@ async def test_daemon_loop_hooks_auto_heal():
         cycle_result = await daemon.collect_cycle()
         assert cycle_result["status"] == "ok"
         assert "watchdog_alerts_count" in cycle_result
+
+
+@pytest.mark.asyncio
+async def test_auto_heal_failed_flush_keeps_alert_active():
+    """P3-R2-03: When UPnP flush returns FAILED status or does not include zone, alert is not marked auto_healed."""
+    now = datetime(2026, 10, 13, 14, 0, 0, tzinfo=timezone.utc)
+    engine = WatchdogEngine()
+    channel = MockAlertChannel()
+
+    sonos_adapter = FakeSonosAdapter(probe_interval_sec=0.01)
+    failed_flush = GhostFlushResult(
+        flushed_count=0,
+        flushed_zones=[],
+        results=[
+            GhostFlushZoneResult(
+                zone_name="Küche",
+                rincon_uuid="RINCON_KUECHE",
+                ip_address="192.168.10.150",
+                previous_group_id="RINCON_GHOST:1",
+                new_group_id="RINCON_KUECHE:0",
+                status="FAILED",
+            )
+        ],
+        captured_at=now,
+    )
+    sonos_adapter.flush_ghost_groups = AsyncMock(return_value=failed_flush)
+
+    coordinator = AutoHealCoordinator(
+        watchdog_engine=engine,
+        sonos_adapter=sonos_adapter,
+        alert_channel=channel,
+    )
+
+    snapshot = _make_ghost_snapshot(now)
+    alerts = await coordinator.handle_snapshot(snapshot)
+
+    assert len(alerts) == 1
+    assert alerts[0].auto_healed is False
+    assert len(engine.get_active_incidents()) == 1
+    assert engine.get_status().is_healthy is False
+
