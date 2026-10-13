@@ -158,14 +158,13 @@
     {
       "id": "PHASE-3-WATCHDOG-TELEGRAM",
       "title": "Autonomous 24/7 Watchdog, Telegram Self-Healing & Companion Distribution",
-      "status": "in_progress",
+      "status": "completed",
       "branch": "board/phase-3-watchdog-telegram-b79e2c41",
       "issue": 30,
       "plan_audit_rounds": 2,
       "plan_audit_clean": true,
       "code_audit_rounds": 3,
       "audit_clean": true,
-      "status": "completed",
       "rounds": [
         {
           "stage": "plan",
