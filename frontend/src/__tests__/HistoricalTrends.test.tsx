@@ -263,8 +263,8 @@ describe("T7 Room Historical Trends & 24/7 Daemon UI", () => {
       screen.getByText("Room Historical Trends: Nicolas")
     ).toBeInTheDocument();
     expect(screen.getAllByText(/ANI 2/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/1.5 err\/s/i)).toBeInTheDocument();
-    expect(screen.getByText(/2.4 ms/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/1.5 err\/s/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/2.4 ms/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Captured 2 snapshot\(s\) for Nicolas over 24h/i)).toBeInTheDocument();
 
     // Change range to 7d

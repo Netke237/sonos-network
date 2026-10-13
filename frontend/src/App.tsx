@@ -93,7 +93,7 @@ export default function App() {
   const [roomHistory, setRoomHistory] = useState<RoomHistoryResponse | null>(null);
   const [historyRange, setHistoryRange] = useState<
     "1h" | "24h" | "7d" | "30d" | "90d" | "1y"
-  >("24h");
+  >("1y");
   const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
   const [daemonStatus, setDaemonStatus] = useState<DaemonStatus | null>(null);
 
@@ -158,7 +158,7 @@ export default function App() {
 
   const handleOpenRoomHistory = async (
     room: RoomMatrixItem,
-    range: "1h" | "24h" | "7d" | "30d" | "90d" | "1y" = "24h"
+    range: "1h" | "24h" | "7d" | "30d" | "90d" | "1y" = "1y"
   ) => {
     setSelectedHistoryRoom(room);
     setHistoryRange(range);
@@ -802,6 +802,31 @@ export default function App() {
               </span>
             )}
             Run 24/7 Daemon Cycle{busyAction === "daemon-cycle" ? " (Running...)" : ""}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const allRooms = overview?.floors.flatMap((f) => f.rooms) ?? [];
+              const target = allRooms.find((r) => r.slug === "wohnzimmer") ?? allRooms[0];
+              if (target) {
+                void handleOpenRoomHistory(target, "1y");
+              }
+            }}
+            style={{
+              backgroundColor: "#0284c7",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 14px",
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              boxShadow: "0 0 10px rgba(2, 132, 199, 0.4)",
+            }}
+          >
+            📈 Yearly Trends &amp; Graph
           </button>
           <button
             type="button"
@@ -2502,130 +2527,192 @@ export default function App() {
         </section>
       )}
 
-      {/* Room Historical Trends Drawer */}
+      {/* Room Historical Trends Modal Dialog */}
       {selectedHistoryRoom && (
-        <section
-          role="region"
-          aria-label="Room Historical Trends Drawer"
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Room Historical Trends Modal"
           style={{
-            marginTop: "24px",
-            backgroundColor: "#1e293b",
-            border: "1px solid #0284c7",
-            borderRadius: "10px",
-            padding: "20px",
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.85)",
+            backdropFilter: "blur(6px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "16px",
           }}
+          onClick={() => setSelectedHistoryRoom(null)}
         >
-          <div
+          <section
+            role="region"
+            aria-label="Room Historical Trends Drawer"
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "16px",
-              flexWrap: "wrap",
-              gap: "10px",
+              backgroundColor: "#1e293b",
+              border: "2px solid #0284c7",
+              borderRadius: "16px",
+              padding: "24px",
+              maxWidth: "1160px",
+              width: "100%",
+              maxHeight: "92vh",
+              overflowY: "auto",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.9)",
             }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <div>
-              <h3 style={{ margin: 0, fontSize: "1.2rem", color: "#f8fafc" }}>
-                Room Historical Trends: {selectedHistoryRoom.name}
-              </h3>
-              <p
-                style={{
-                  margin: "4px 0 0",
-                  color: "#94a3b8",
-                  fontSize: "0.82rem",
-                }}
-              >
-                Time-series Sonos RF, PHY error rate, ping latency &amp; Wi-Fi telemetry from 24/7 background collector
-              </p>
-            </div>
-
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <div style={{ display: "flex", gap: "4px" }}>
-                {(["1h", "24h", "7d", "30d", "90d", "1y"] as const).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    disabled={Boolean(busyAction)}
-                    onClick={() => void handleChangeHistoryRange(r)}
-                    style={{
-                      backgroundColor: historyRange === r ? "#0284c7" : "#0f172a",
-                      color: "#f8fafc",
-                      border: "1px solid #38bdf8",
-                      borderRadius: "4px",
-                      padding: "4px 10px",
-                      fontSize: "0.78rem",
-                      fontWeight: 700,
-                      cursor: busyAction ? "not-allowed" : "pointer",
-                      opacity: busyAction && busyAction !== `history-range-${r}` ? 0.65 : 1,
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "4px",
-                    }}
-                  >
-                    {busyAction === `history-range-${r}` && (
-                      <span
-                        style={{
-                          display: "inline-block",
-                          animation: "sonosSpin 1.5s linear infinite",
-                        }}
-                      >
-                        ⏳
-                      </span>
-                    )}
-                    {r === "1y" ? "365d (1y)" : r}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedHistoryRoom(null)}
-                style={{
-                  background: "transparent",
-                  border: "1px solid #64748b",
-                  borderRadius: "4px",
-                  color: "#94a3b8",
-                  padding: "4px 10px",
-                  cursor: "pointer",
-                  fontSize: "0.8rem",
-                }}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-
-          {loadingHistory && (
-            <p style={{ color: "#38bdf8" }}>Loading history telemetry...</p>
-          )}
-
-          {roomHistory && (
-            <div>
-              {/* Narrative Summary */}
-              <div
-                style={{
-                  backgroundColor: "#0f172a",
-                  padding: "10px 14px",
-                  borderRadius: "6px",
-                  marginBottom: "16px",
-                  fontSize: "0.82rem",
-                  color: "#cbd5e1",
-                  borderLeft: "3px solid #0284c7",
-                }}
-              >
-                {roomHistory.summary}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "16px",
+                flexWrap: "wrap",
+                gap: "12px",
+                borderBottom: "1px solid #334155",
+                paddingBottom: "14px",
+              }}
+            >
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                  <h3 style={{ margin: 0, fontSize: "1.25rem", color: "#f8fafc" }}>
+                    Room Historical Trends: {selectedHistoryRoom.name}
+                  </h3>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ fontSize: "0.8rem", color: "#94a3b8" }}>Switch Room:</span>
+                    <select
+                      aria-label="Select Room for Historical Trends"
+                      value={selectedHistoryRoom.slug}
+                      onChange={(e) => {
+                        const allRooms = overview?.floors.flatMap((f) => f.rooms) ?? [];
+                        const target = allRooms.find((r) => r.slug === e.target.value);
+                        if (target) {
+                          void handleOpenRoomHistory(target, historyRange);
+                        }
+                      }}
+                      style={{
+                        backgroundColor: "#0f172a",
+                        color: "#38bdf8",
+                        border: "1px solid #0284c7",
+                        borderRadius: "6px",
+                        padding: "4px 10px",
+                        fontSize: "0.85rem",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {(overview?.floors.flatMap((f) => f.rooms) ?? []).map((r) => (
+                        <option key={r.slug} value={r.slug}>
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <p
+                  style={{
+                    margin: "6px 0 0",
+                    color: "#94a3b8",
+                    fontSize: "0.82rem",
+                  }}
+                >
+                  Time-series RF stability, OFDM ANI, PHY error bursts, and ping latency from 24/7 background collector (365-day PostgreSQL ring buffer)
+                </p>
               </div>
 
-              {/* Yearly & Weekly Graphical Historical Visualizer */}
-              <YearlyHistoricalVisualizer
-                roomHistory={roomHistory}
-                currentRange={historyRange}
-                onRangeChange={handleChangeHistoryRange}
-                busy={Boolean(busyAction)}
-              />
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: "4px" }}>
+                  {(["1h", "24h", "7d", "30d", "90d", "1y"] as const).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      disabled={Boolean(busyAction)}
+                      onClick={() => void handleChangeHistoryRange(r)}
+                      style={{
+                        backgroundColor: historyRange === r ? "#0284c7" : "#0f172a",
+                        color: "#f8fafc",
+                        border: historyRange === r ? "1px solid #38bdf8" : "1px solid #475569",
+                        borderRadius: "4px",
+                        padding: "5px 10px",
+                        fontSize: "0.78rem",
+                        fontWeight: 700,
+                        cursor: busyAction ? "not-allowed" : "pointer",
+                        opacity: busyAction && busyAction !== `history-range-${r}` ? 0.65 : 1,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                      }}
+                    >
+                      {busyAction === `history-range-${r}` && (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            animation: "sonosSpin 1.5s linear infinite",
+                          }}
+                        >
+                          ⏳
+                        </span>
+                      )}
+                      {r === "1y" ? "365d (1y)" : r}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedHistoryRoom(null)}
+                  style={{
+                    background: "#ef4444",
+                    border: "none",
+                    borderRadius: "6px",
+                    color: "#ffffff",
+                    padding: "6px 14px",
+                    cursor: "pointer",
+                    fontSize: "0.85rem",
+                    fontWeight: 700,
+                    boxShadow: "0 2px 6px rgba(239, 68, 68, 0.4)",
+                  }}
+                >
+                  ✕ Close
+                </button>
+              </div>
             </div>
-          )}
-        </section>
+
+            {loadingHistory && (
+              <p style={{ color: "#38bdf8" }}>Loading history telemetry...</p>
+            )}
+
+            {roomHistory && (
+              <div>
+                {/* Narrative Summary */}
+                <div
+                  style={{
+                    backgroundColor: "#0f172a",
+                    padding: "10px 14px",
+                    borderRadius: "6px",
+                    marginBottom: "16px",
+                    fontSize: "0.82rem",
+                    color: "#cbd5e1",
+                    borderLeft: "3px solid #0284c7",
+                  }}
+                >
+                  {roomHistory.summary}
+                </div>
+
+                {/* Yearly & Weekly Graphical Historical Visualizer */}
+                <YearlyHistoricalVisualizer
+                  roomHistory={roomHistory}
+                  currentRange={historyRange}
+                  onRangeChange={handleChangeHistoryRange}
+                  busy={Boolean(busyAction)}
+                />
+              </div>
+            )}
+          </section>
+        </div>
       )}
 
       {/* Selected Room Wi-Fi Spectrum & Survey Drawer */}

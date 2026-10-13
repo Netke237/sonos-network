@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { RoomHistoryResponse, RoomHistoryRollupBucket } from "../types/topology";
 
 interface YearlyHistoricalVisualizerProps {
@@ -20,6 +20,8 @@ export const YearlyHistoricalVisualizer: React.FC<YearlyHistoricalVisualizerProp
       ? "MONTHLY"
       : isLongTerm
       ? "WEEKLY"
+      : roomHistory.rollup_buckets.length > 0
+      ? "MONTHLY"
       : "SAMPLES"
   );
   const [selectedBucket, setSelectedBucket] = useState<RoomHistoryRollupBucket | null>(
@@ -27,6 +29,24 @@ export const YearlyHistoricalVisualizer: React.FC<YearlyHistoricalVisualizerProp
       ? roomHistory.rollup_buckets[roomHistory.rollup_buckets.length - 1]
       : null
   );
+
+  useEffect(() => {
+    if (["1y", "365d"].includes(currentRange)) {
+      setViewMode("MONTHLY");
+    } else if (["30d", "90d"].includes(currentRange)) {
+      setViewMode("WEEKLY");
+    } else if (roomHistory.rollup_buckets.length > 0 && viewMode === "SAMPLES") {
+      setViewMode("MONTHLY");
+    }
+  }, [currentRange, roomHistory.rollup_buckets.length]);
+
+  useEffect(() => {
+    if (roomHistory.rollup_buckets.length > 0) {
+      setSelectedBucket(
+        roomHistory.rollup_buckets[roomHistory.rollup_buckets.length - 1]
+      );
+    }
+  }, [roomHistory.rollup_buckets]);
 
   const buckets = roomHistory.rollup_buckets;
 
@@ -80,8 +100,12 @@ export const YearlyHistoricalVisualizer: React.FC<YearlyHistoricalVisualizerProp
           <div style={{ display: "flex", gap: "4px" }}>
             <button
               type="button"
-              disabled={buckets.length === 0}
-              onClick={() => setViewMode("MONTHLY")}
+              onClick={() => {
+                setViewMode("MONTHLY");
+                if (currentRange !== "1y" && currentRange !== "365d" && onRangeChange) {
+                  onRangeChange("1y");
+                }
+              }}
               style={{
                 backgroundColor: viewMode === "MONTHLY" ? "#0284c7" : "#1e293b",
                 color: "#f8fafc",
@@ -90,16 +114,19 @@ export const YearlyHistoricalVisualizer: React.FC<YearlyHistoricalVisualizerProp
                 padding: "4px 10px",
                 fontSize: "0.76rem",
                 fontWeight: 700,
-                cursor: buckets.length === 0 ? "not-allowed" : "pointer",
-                opacity: buckets.length === 0 ? 0.5 : 1,
+                cursor: "pointer",
               }}
             >
               📅 Monthly Rollup
             </button>
             <button
               type="button"
-              disabled={buckets.length === 0}
-              onClick={() => setViewMode("WEEKLY")}
+              onClick={() => {
+                setViewMode("WEEKLY");
+                if (!["30d", "90d", "1y", "365d"].includes(currentRange) && onRangeChange) {
+                  onRangeChange("30d");
+                }
+              }}
               style={{
                 backgroundColor: viewMode === "WEEKLY" ? "#0284c7" : "#1e293b",
                 color: "#f8fafc",
@@ -108,8 +135,7 @@ export const YearlyHistoricalVisualizer: React.FC<YearlyHistoricalVisualizerProp
                 padding: "4px 10px",
                 fontSize: "0.76rem",
                 fontWeight: 700,
-                cursor: buckets.length === 0 ? "not-allowed" : "pointer",
-                opacity: buckets.length === 0 ? 0.5 : 1,
+                cursor: "pointer",
               }}
             >
               📆 Weekly Rollup
@@ -578,6 +604,27 @@ export const YearlyHistoricalVisualizer: React.FC<YearlyHistoricalVisualizerProp
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Empty State when no telemetry is recorded yet */}
+      {buckets.length === 0 && roomHistory.samples.length === 0 && (
+        <div
+          style={{
+            backgroundColor: "#0f172a",
+            padding: "36px 20px",
+            borderRadius: "8px",
+            border: "1px dashed #334155",
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: "2rem", marginBottom: "8px" }}>📈</div>
+          <div style={{ fontSize: "1rem", fontWeight: 700, color: "#f8fafc", marginBottom: "6px" }}>
+            No Historical Samples Recorded Yet for {roomHistory.room_name} ({currentRange})
+          </div>
+          <p style={{ fontSize: "0.85rem", color: "#94a3b8", maxWidth: "600px", margin: "0 auto 16px" }}>
+            The 24/7 background collector records telemetry every 60 seconds into PostgreSQL (retained for up to 365 days). Click &quot;Run 24/7 Daemon Cycle&quot; in the top bar to record a snapshot immediately, or toggle the time range.
+          </p>
         </div>
       )}
     </div>

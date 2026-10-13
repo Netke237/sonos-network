@@ -1598,7 +1598,7 @@ class SqlAlchemyTopologyRepository:
         target_gran = (
             effective_granularity
             if effective_granularity in ("weekly", "monthly")
-            else ("weekly" if time_range in ("30d", "90d", "365d", "1y") else None)
+            else ("monthly" if time_range in ("365d", "1y") else "weekly")
         )
 
         if target_gran is not None and points:
