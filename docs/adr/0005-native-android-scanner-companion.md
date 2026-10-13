@@ -18,10 +18,10 @@ Phase 1 established the centralized Always-On Mini PC platform (`FastAPI + Postg
    - Direct hardware integration with Android's `WifiManager.startScan()` and `ScanResult` APIs without bridge overhead or cross-platform limitations.
 2. **Hybrid Companion Role**:
    - Acts as both a **Field Walkthrough Scanner** (walk room to room, single-tap capture 802.11 BSSID readings, automatically classify APs) and a **Pocket Health Console** (view house health, inspect 3-pillar room diagnostics, execute 1-click UPnP actions).
-3. **Single-Shot Probe & Throttling Defense**:
-   - Each walkthrough room tap triggers an asynchronous single-shot probe awaiting OS broadcast (with a 10s timeout), allowing up to 4 rooms to be surveyed per 2-minute window within Android 10+ foreground throttling (`WIFI_SCAN_THROTTLE`).
-   - Verifies `intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false)`. If false, aborts and warns the user instead of recording stale cached data. Optional 2-sample probe retained for stationary single-room audits with asymmetric RSSI averaging across detected samples.
-   - Accurately captures 802.11 channel widths (20/40/80/160 MHz), center channels, UNII-1/2A/2C/3 channels, and classifies BSSIDs.
+3. **Single-Shot Fresh Room Probes & Throttle Guard**:
+   - Each walkthrough room tap triggers an asynchronous single-shot probe awaiting OS broadcast (with a 10s timeout), verifying `EXTRA_RESULTS_UPDATED == true` and checking timestamp freshness so stale cached results are never recorded.
+   - Operates strictly within Android 10+ scan throttling limits (4 scans per 2 minutes per foreground app) across multi-room walkthroughs. If throttled, presents a visible countdown timer rather than silently saving stale data. Optional 2-sample probe retained for stationary single-room audits with asymmetric RSSI averaging across detected samples.
+   - Accurately captures 802.11 channel widths (20/40/80/160 MHz), band-dependent center channels, UNII-1/2A/2C/3 channels, and classifies BSSIDs.
 4. **Offline Store-and-Forward with Idempotency (Android Room SQLite)**:
    - Room surveys captured while disconnected (e.g. basement leaf walk) are persisted locally in an Android Room SQLite database queue with original `captured_at` timestamps and `client_survey_id` UUIDs.
    - An automatic background synchronization worker checks API connectivity and forwards queued surveys to `POST /api/rooms/{slug}/surveys` upon reconnection. Server deduplicates on `client_survey_id` to guarantee idempotent retries without corrupting history.

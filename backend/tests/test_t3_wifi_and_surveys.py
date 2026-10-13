@@ -251,6 +251,28 @@ async def test_wifi_infrastructure_and_room_surveys_api_and_post_ingestion(tmp_p
             assert classifications["54:2A:1B:64:26:81"] == "SONOSNET_MESH"
             assert classifications["1C:23:A2:7A:E3:7A"] == "NEIGHBOR_WIFI"
 
+            # 3b. Verify offline store-and-forward captured_at timestamp preservation
+            historical_ts = "2026-10-12T19:30:00Z"
+            survey_offline_payload = {
+                "label": "Offline Store-and-Forward Basement Survey",
+                "trigger_mode": "STORE_AND_FORWARD",
+                "captured_at": historical_ts,
+                "readings": [
+                    {
+                        "bssid": "76:4C:BC:76:94:C0",
+                        "ssid": "WuTangLan-Family",
+                        "band": "2.4GHz",
+                        "channel": 11,
+                        "rssi_dbm": -68,
+                    }
+                ],
+            }
+            resp_off = await client.post("/api/rooms/noemi/surveys", json=survey_offline_payload)
+            assert resp_off.status_code == 201
+            created_off = resp_off.json()
+            assert created_off["captured_at"].startswith("2026-10-12T19:30:00")
+            assert created_off["trigger_mode"] == "STORE_AND_FORWARD"
+
             # 4. Verify GET /api/overview reflects the enriched Wi-Fi survey fields on Noemi and Nicolas
             ov_resp = await client.get("/api/overview")
             assert ov_resp.status_code == 200
