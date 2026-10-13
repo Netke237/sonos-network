@@ -533,12 +533,6 @@ class SqlAlchemyTopologyRepository:
                 row.coordinator_uuid = row.bonded_parent_uuid or row.rincon_uuid
                 row.has_vanished_devices = False
                 row.is_ghost_group = False
-            elif row.is_ghost_group:
-                coord = row.bonded_parent_uuid or row.rincon_uuid
-                row.group_id = f"{coord}:1"
-                row.coordinator_uuid = coord
-                row.has_vanished_devices = False
-                row.is_ghost_group = False
         await self._session.commit()
 
     async def get_room_by_slug_or_id(self, room_ref: str) -> Room | None:

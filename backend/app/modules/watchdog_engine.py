@@ -27,10 +27,18 @@ class WatchdogAlert(BaseModel):
     title: str
     description: str
     action_required: str
+    remediation_guide: str | None = None
     entity_id: str
     detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     auto_healed: bool = False
     cleared: bool = False
+    resolved_at: datetime | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.remediation_guide is None:
+            self.remediation_guide = self.action_required
+        if self.cleared and self.resolved_at is None:
+            self.resolved_at = self.detected_at
 
 
 class IncidentState(BaseModel):
@@ -92,7 +100,11 @@ class WatchdogEngine:
         self._auto_heal_enabled = enabled
 
     def get_active_incidents(self) -> list[IncidentState]:
-        return [inc for inc in self._incidents.values() if inc.is_active]
+        return [
+            inc
+            for inc in self._incidents.values()
+            if inc.is_active and not inc.auto_healed
+        ]
 
     def clear_incident(self, incident_key: str) -> None:
         if incident_key in self._incidents:
@@ -134,11 +146,13 @@ class WatchdogEngine:
         current_time = now or datetime.now(timezone.utc)
         current_detected: dict[str, dict] = {}
 
-        # 1. Evaluate Ghost Groups
+        # 1. Evaluate Ghost Groups (P3-CF-08: deduplicated union of header zones and player flags)
         if snapshot.has_ghost_groups or any(p.is_ghost_group for p in snapshot.players):
-            zones = list(snapshot.ghost_group_zones)
-            if not zones:
-                zones = [p.zone_name or p.room_name or p.rincon_uuid for p in snapshot.players if p.is_ghost_group]
+            zones_set = set(snapshot.ghost_group_zones)
+            for p in snapshot.players:
+                if p.is_ghost_group:
+                    zones_set.add(p.zone_name or p.room_name or p.rincon_uuid)
+            zones = sorted(zones_set)
             for zone in zones:
                 key = f"{WatchdogAnomalyType.GHOST_GROUP.value}:{zone}"
                 current_detected[key] = {
@@ -169,7 +183,7 @@ class WatchdogEngine:
             elif snapshot.is_root_healthy is False:
                 is_usurped = True
 
-        if is_usurped:
+        if is_usurped and not observed_root.lower().startswith(root_mac_prefix):
             # Consolidate household into single incident key (P3-F-05)
             key = f"{WatchdogAnomalyType.STP_ROOT_USURPED.value}:household"
             current_detected[key] = {
@@ -181,7 +195,7 @@ class WatchdogEngine:
                 "action_required": "Unplug Ethernet from rogue node (Keller) or disable Wi-Fi/SonosNet on secondary wired leaf; preserve Wohnzimmer_Bookshelf as sole root bridge.",
             }
 
-        # 3. Evaluate EMI Burst (Null-safe Atheros evaluation, P3-F-03 / P3-CF-01)
+        # 3. Evaluate EMI Burst (P3-CF-01: Null-safe Atheros formatting)
         for p in snapshot.players:
             has_emi = (p.ofdm_ani_level is not None and p.ofdm_ani_level >= 7) or (
                 p.phy_error_rate is not None and p.phy_error_rate > 100.0
@@ -192,14 +206,14 @@ class WatchdogEngine:
                 severity = "CRITICAL" if (p.phy_error_rate is not None and p.phy_error_rate > 100.0) or (
                     p.ofdm_ani_level is not None and p.ofdm_ani_level >= 8
                 ) else "MARGINAL"
-                ani_desc = f"OFDM ANI {p.ofdm_ani_level}" if p.ofdm_ani_level is not None else "OFDM ANI N/A"
-                phy_desc = f"{p.phy_error_rate:.1f} PHY err/s" if p.phy_error_rate is not None else "PHY err/s N/A"
+                ani_str = f"OFDM ANI {p.ofdm_ani_level}" if p.ofdm_ani_level is not None else "OFDM ANI N/A"
+                phy_str = f"{p.phy_error_rate:.1f} PHY err/s" if p.phy_error_rate is not None else "PHY err/s N/A"
                 current_detected[key] = {
                     "anomaly_type": WatchdogAnomalyType.EMI_BURST,
                     "entity_id": speaker,
                     "severity": severity,
                     "title": f"Severe 2.4 GHz EMI Burst on {speaker}",
-                    "description": f"Player '{speaker}' recorded {ani_desc} and {phy_desc}, risking DPC volume ducking and packet drops.",
+                    "description": f"Player '{speaker}' recorded {ani_str} and {phy_str}, risking DPC volume ducking and packet drops.",
                     "action_required": "Inspect local USB-C docks / power supplies near speaker; relocate speaker 1-2m laterally.",
                 }
 
@@ -224,16 +238,18 @@ class WatchdogEngine:
             if key in self._incidents and self._incidents[key].is_active:
                 inc = self._incidents[key]
                 inc.last_seen_at = current_time
-                elapsed = (current_time - inc.last_alerted_at).total_seconds()
-                if elapsed >= self.debounce_seconds:
-                    # Debounce interval expired: re-alert
+                if inc.auto_healed:
+                    # P3-R2-02: Previous auto-heal failed to clear the condition in hardware!
+                    # Reset auto_healed so it's not hidden from active faults,
+                    # and re-emit immediately so AutoHealCoordinator can retry or escalate.
+                    inc.auto_healed = False
                     inc.last_alerted_at = current_time
                     alert = WatchdogAlert(
                         incident_key=key,
                         anomaly_type=data["anomaly_type"],
                         severity=data["severity"],
-                        title=f"[REPEATING] {data['title']}",
-                        description=data["description"],
+                        title=f"[PERSISTENT] {data['title']}",
+                        description=f"{data['description']} (Auto-heal attempted but condition persists).",
                         action_required=data["action_required"],
                         entity_id=data["entity_id"],
                         detected_at=current_time,
@@ -241,6 +257,24 @@ class WatchdogEngine:
                     )
                     alerts_to_emit.append(alert)
                     self._history.append(alert)
+                else:
+                    elapsed = (current_time - inc.last_alerted_at).total_seconds()
+                    if elapsed >= self.debounce_seconds:
+                        # Debounce interval expired: re-alert
+                        inc.last_alerted_at = current_time
+                        alert = WatchdogAlert(
+                            incident_key=key,
+                            anomaly_type=data["anomaly_type"],
+                            severity=data["severity"],
+                            title=f"[REPEATING] {data['title']}",
+                            description=data["description"],
+                            action_required=data["action_required"],
+                            entity_id=data["entity_id"],
+                            detected_at=current_time,
+                            cleared=False,
+                        )
+                        alerts_to_emit.append(alert)
+                        self._history.append(alert)
             else:
                 # Brand new or reactivated incident
                 inc = IncidentState(
@@ -315,6 +349,7 @@ class AutoHealCoordinator:
         now: datetime | None = None,
     ) -> list[WatchdogAlert]:
         alerts = self.watchdog_engine.evaluate_snapshot(snapshot, now=now)
+        flush_res = None
         for alert in alerts:
             if (
                 alert.anomaly_type == WatchdogAnomalyType.GHOST_GROUP
@@ -322,25 +357,31 @@ class AutoHealCoordinator:
                 and self.watchdog_engine.is_auto_heal_enabled()
             ):
                 try:
-                    logger.info("Executing autonomous UPnP Ghost Group flush for zone %s...", alert.entity_id)
-                    target_player = next(
-                        (
-                            p
-                            for p in snapshot.players
-                            if (p.zone_name or p.room_name or p.rincon_uuid) == alert.entity_id
-                        ),
-                        None,
+                    if flush_res is None:
+                        logger.info("Executing autonomous UPnP Ghost Group flush...")
+                        flush_res = await self.sonos_adapter.flush_ghost_groups()
+                        if repo is not None:
+                            # Atomic PostgreSQL synchronization (P3-F-02)
+                            await repo.apply_ghost_flush(flush_res)
+                    zone_flushed = flush_res is not None and (
+                        alert.entity_id in flush_res.flushed_zones
+                        or any(
+                            r.zone_name == alert.entity_id and r.status in ("SANITIZED", "FLUSHED")
+                            for r in getattr(flush_res, "results", [])
+                        )
                     )
-                    target_ips = [target_player.ip_address] if (target_player and target_player.ip_address) else None
-                    flush_res = await self.sonos_adapter.flush_ghost_groups(zone_ips=target_ips)
-                    if repo is not None:
-                        # Atomic PostgreSQL synchronization (P3-F-02)
-                        await repo.apply_ghost_flush(flush_res)
-                    self.watchdog_engine.record_auto_heal(alert.incident_key)
-                    alert.auto_healed = True
-                    alert.action_required = "None. Automatically sanitized via UPnP BecomeCoordinatorOfStandaloneGroup."
+                    if zone_flushed:
+                        self.watchdog_engine.record_auto_heal(alert.incident_key)
+                        alert.auto_healed = True
+                    else:
+                        logger.warning(
+                            "Auto-heal flush did not sanitize zone %s; keeping alert active",
+                            alert.entity_id,
+                        )
+                        alert.auto_healed = False
                 except Exception as err:
                     logger.error("Auto-heal flush failed for zone %s: %s", alert.entity_id, err)
+                    alert.auto_healed = False
 
             if self.alert_channel is not None:
                 await self.alert_channel.send_alert(alert)

@@ -32,6 +32,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
+      - name: Make Gradle Wrapper Executable
+        working-directory: android
+        run: chmod +x gradlew
+
       - name: Run Android Unit Tests
         working-directory: android
         run: ./gradlew testDebugUnitTest --no-daemon

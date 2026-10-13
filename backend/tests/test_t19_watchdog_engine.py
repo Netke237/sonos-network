@@ -285,3 +285,123 @@ def test_auto_heal_toggle():
     assert engine.is_auto_heal_enabled() is False
     engine.set_auto_heal(True)
     assert engine.is_auto_heal_enabled() is True
+
+
+def test_emi_burst_null_phy_error_rate_safety():
+    """P3-CF-01: Null phy_error_rate must not raise TypeError during format string evaluation."""
+    engine = WatchdogEngine()
+    player = _make_dummy_player(
+        "RINCON_1", "Wohnzimmer_Buchregal", "Wohnzimmer_Buchregal",
+        ofdm_ani_level=8, phy_error_rate=None
+    )
+    snap = _make_dummy_snapshot([player])
+    alerts = engine.evaluate_snapshot(snap)
+    assert len(alerts) == 1
+    assert alerts[0].anomaly_type == WatchdogAnomalyType.EMI_BURST
+    assert "OFDM ANI 8" in alerts[0].description
+    assert "N/A PHY err/s" in alerts[0].description
+
+
+def test_stp_usurpation_reports_rogue_player_root_mac():
+    """P3-CF-02: Rogue root MAC claimed by secondary player must be reported in alert title/desc."""
+    engine = WatchdogEngine()
+    root_player = _make_dummy_player("RINCON_ROOT", "Wohnzimmer_Bookshelf", "Wohnzimmer", designated_root="9000.542a1b63fe6e")
+    rogue_player = _make_dummy_player("RINCON_KELLER", "Keller", "Keller", designated_root="9000.5caafd595eea")
+    snap = _make_dummy_snapshot([root_player, rogue_player], is_root_healthy=False, designated_stp_root="9000.542a1b63fe6e")
+    alerts = engine.evaluate_snapshot(snap)
+    assert len(alerts) == 1
+    assert alerts[0].anomaly_type == WatchdogAnomalyType.STP_ROOT_USURPED
+    assert "9000.5caafd595eea" in alerts[0].title
+    assert "9000.5caafd595eea" in alerts[0].description
+
+
+def test_ghost_group_zones_deduplicated_union():
+    """P3-CF-08: Union of ghost_group_zones and player flags must include all affected zones."""
+    engine = WatchdogEngine()
+    p1 = _make_dummy_player("RINCON_1", "Küche", "Küche", is_ghost_group=True)
+    p2 = _make_dummy_player("RINCON_2", "Noemi", "Noemi", is_ghost_group=True)
+    snap = _make_dummy_snapshot([p1, p2], has_ghost_groups=True, ghost_group_zones=["Küche"])
+    alerts = engine.evaluate_snapshot(snap)
+    assert len(alerts) == 2
+    alert_entities = {a.entity_id for a in alerts}
+    assert alert_entities == {"Küche", "Noemi"}
+
+
+def test_auto_healed_excluded_from_get_active_incidents():
+    """P3-CF-09: Auto-healed incidents must not be returned by get_active_incidents()."""
+    engine = WatchdogEngine()
+    p1 = _make_dummy_player("RINCON_1", "Küche", "Küche", is_ghost_group=True)
+    snap = _make_dummy_snapshot([p1], has_ghost_groups=True, ghost_group_zones=["Küche"])
+    alerts = engine.evaluate_snapshot(snap)
+    assert len(alerts) == 1
+    key = alerts[0].incident_key
+
+    # Before auto-heal: active
+    assert len(engine.get_active_incidents()) == 1
+    assert engine.get_status().is_healthy is False
+
+    # After auto-heal: excluded from active incidents
+    engine.record_auto_heal(key)
+    assert len(engine.get_active_incidents()) == 0
+    assert engine.get_status().is_healthy is True
+
+
+def test_watchdog_alert_remediation_guide_and_resolved_at():
+    """P3-CF-10: WatchdogAlert must provide remediation_guide alias and resolved_at on clearance."""
+    alert = WatchdogAlert(
+        incident_key="test_key",
+        anomaly_type=WatchdogAnomalyType.EMI_BURST,
+        severity="MARGINAL",
+        title="Test Alert",
+        description="Test Desc",
+        action_required="Relocate speaker",
+        entity_id="Wohnzimmer",
+    )
+    assert alert.remediation_guide == "Relocate speaker"
+    assert alert.resolved_at is None
+
+    cleared_alert = WatchdogAlert(
+        incident_key="test_key",
+        anomaly_type=WatchdogAnomalyType.EMI_BURST,
+        severity="INFO",
+        title="RESOLVED: Test Alert",
+        description="Clean",
+        action_required="None",
+        entity_id="Wohnzimmer",
+        cleared=True,
+    )
+    assert cleared_alert.resolved_at is not None
+    assert cleared_alert.resolved_at == cleared_alert.detected_at
+
+
+def test_stp_root_unhealthy_without_rogue_mac_does_not_claim_usurpation():
+    """P3-R2-01: If is_root_healthy is False but designated root is legitimate, no usurpation alert is emitted."""
+    engine = WatchdogEngine()
+    root_player = _make_dummy_player("RINCON_ROOT", "Wohnzimmer_Bookshelf", "Wohnzimmer", designated_root="9000.542a1b63fe6e")
+    snap = _make_dummy_snapshot([root_player], is_root_healthy=False, designated_stp_root="9000.542a1b63fe6e")
+    alerts = engine.evaluate_snapshot(snap)
+    assert len(alerts) == 0
+
+
+def test_auto_heal_persistent_condition_resets_flag_and_realerts():
+    """P3-R2-02: If condition persists across poll cycles after auto-heal, auto_healed is reset and persistent alert emitted."""
+    from datetime import timedelta
+    engine = WatchdogEngine()
+    t0 = datetime(2026, 10, 13, 12, 0, 0, tzinfo=timezone.utc)
+    p = _make_dummy_player("RINCON_KUECHE", "Küche", "Küche", is_ghost_group=True)
+    snap0 = _make_dummy_snapshot([p], has_ghost_groups=True, ghost_group_zones=["Küche"], now=t0)
+    alerts0 = engine.evaluate_snapshot(snap0, now=t0)
+    assert len(alerts0) == 1
+    key = alerts0[0].incident_key
+    engine.record_auto_heal(key)
+    assert len(engine.get_active_incidents()) == 0
+
+    # Next cycle 60s later: condition persists
+    t1 = t0 + timedelta(seconds=60)
+    snap1 = _make_dummy_snapshot([p], has_ghost_groups=True, ghost_group_zones=["Küche"], now=t1)
+    alerts1 = engine.evaluate_snapshot(snap1, now=t1)
+    assert len(alerts1) == 1
+    assert "[PERSISTENT]" in alerts1[0].title
+    assert len(engine.get_active_incidents()) == 1
+    assert engine.get_status().is_healthy is False
+

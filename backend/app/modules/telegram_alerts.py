@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import logging
 import os
 from typing import Protocol
@@ -11,26 +10,31 @@ from app.modules.watchdog_engine import WatchdogAlert
 logger = logging.getLogger("sonos_network.telegram_alerts")
 
 
+def _escape_md(text: str) -> str:
+    """Escapes underscores to prevent Telegram entity parsing errors on zone names / RINCON UUIDs."""
+    return text.replace("_", "\\_")
+
+
 def format_telegram_alert_card(alert: WatchdogAlert) -> str:
-    escaped_title = html.escape(alert.title)
+    escaped_title = _escape_md(alert.title)
     if alert.cleared:
-        header = f"✅ <b>[RESOLVED] {escaped_title}</b>"
+        header = f"✅ *[RESOLVED] {escaped_title}*"
     elif alert.auto_healed:
-        header = f"⚡ <b>[AUTO-HEALED] {escaped_title}</b>"
+        header = f"⚡ *[AUTO-HEALED] {escaped_title}*"
     elif alert.severity == "CRITICAL":
-        header = f"🚨 <b>[CRITICAL] {escaped_title}</b>"
+        header = f"🚨 *[CRITICAL] {escaped_title}*"
     elif alert.severity == "MARGINAL":
-        header = f"⚠️ <b>[WARNING] {escaped_title}</b>"
+        header = f"⚠️ *[WARNING] {escaped_title}*"
     else:
-        header = f"ℹ️ <b>[INFO] {escaped_title}</b>"
+        header = f"ℹ️ *[INFO] {escaped_title}*"
 
     lines = [
         header,
         "",
-        f"📍 <b>Entity:</b> <code>{html.escape(alert.entity_id)}</code>",
-        f"⏱ <b>Time:</b> {alert.detected_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
-        f"📝 <b>Detail:</b> {html.escape(alert.description)}",
-        f"🛠 <b>Action:</b> {html.escape(alert.action_required)}",
+        f"📍 *Entity:* {_escape_md(alert.entity_id)}",
+        f"⏱ *Time:* {alert.detected_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
+        f"📝 *Detail:* {_escape_md(alert.description)}",
+        f"🛠 *Action:* {_escape_md(alert.action_required)}",
     ]
     return "\n".join(lines)
 
@@ -71,7 +75,7 @@ class TelegramAlertAdapter:
         payload = {
             "chat_id": self.chat_id,
             "text": text,
-            "parse_mode": "HTML",
+            "parse_mode": "Markdown",
         }
 
         try:
@@ -84,6 +88,19 @@ class TelegramAlertAdapter:
             if resp.status_code == 200 and resp.json().get("ok") is True:
                 logger.info("Telegram notification card delivered successfully.")
                 return True
+            elif resp.status_code == 400 and "can't parse entities" in resp.text:
+                # Fallback: Retry as plain text without parse_mode if formatting broke
+                logger.warning("Telegram parse_mode failed, retrying plain text payload...")
+                plain_payload = {"chat_id": self.chat_id, "text": text}
+                if self._http_client is not None:
+                    resp_retry = await self._http_client.post(url, json=plain_payload, timeout=10.0)
+                else:
+                    async with httpx.AsyncClient() as client:
+                        resp_retry = await client.post(url, json=plain_payload, timeout=10.0)
+                if resp_retry.status_code == 200 and resp_retry.json().get("ok") is True:
+                    logger.info("Telegram plain text fallback delivered successfully.")
+                    return True
+                return False
             else:
                 logger.warning(
                     "Telegram API responded with error status %d: %s",
