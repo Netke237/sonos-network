@@ -1,7 +1,7 @@
 {
   "project": "sonos-network",
   "repo": "Netke237/sonos-network",
-  "active_phase": "PHASE-3-WATCHDOG-TELEGRAM",
+  "active_phase": null,
   "audit_rule": {
     "max_rounds_per_stage": 3,
     "gate_criteria": [
