@@ -39,6 +39,7 @@ from app.modules.telegram_alerts import (
     TelegramAlertAdapter,
 )
 from app.modules.watchdog_engine import (
+    AutoHealCoordinator,
     WatchdogEngine,
     WatchdogEnginePort,
     WatchdogStatusSchema,
@@ -115,10 +116,16 @@ def create_app(
     default_alert_channel: AlertChannelPort = (
         alert_channel or TelegramAlertAdapter()
     )
+    default_auto_heal_coordinator = AutoHealCoordinator(
+        watchdog_engine=default_watchdog_engine,
+        sonos_adapter=default_adapter,
+        alert_channel=default_alert_channel,
+    )
     default_daemon = ScheduledTelemetryCollector(
         session_factory=session_factory,
         sonos_adapter=default_adapter,
         wifi_adapter=default_wifi_adapter,
+        auto_heal_coordinator=default_auto_heal_coordinator,
         interval_sec=float(os.getenv("BACKGROUND_POLL_INTERVAL_SEC", "60.0")),
         retention_days=int(os.getenv("TELEMETRY_RETENTION_DAYS", "7")),
         consumer_id="background-60s",
@@ -134,6 +141,7 @@ def create_app(
         app.state.diagnostic_engine = default_diagnostic_engine
         app.state.watchdog_engine = default_watchdog_engine
         app.state.alert_channel = default_alert_channel
+        app.state.auto_heal_coordinator = default_auto_heal_coordinator
         app.state.telemetry_daemon = default_daemon
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -164,6 +172,7 @@ def create_app(
     app.state.diagnostic_engine = default_diagnostic_engine
     app.state.watchdog_engine = default_watchdog_engine
     app.state.alert_channel = default_alert_channel
+    app.state.auto_heal_coordinator = default_auto_heal_coordinator
     app.state.telemetry_daemon = default_daemon
 
     app.add_middleware(

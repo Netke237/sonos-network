@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Protocol
+import logging
+from typing import Any, Protocol
 import uuid
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger("sonos_network.watchdog_engine")
 
 from app.schemas.topology import HouseholdSonosSnapshot
 
@@ -286,3 +289,45 @@ class WatchdogEngine:
                 self._history.append(resolve_alert)
 
         return alerts_to_emit
+
+
+class AutoHealCoordinator:
+    def __init__(
+        self,
+        watchdog_engine: WatchdogEnginePort,
+        sonos_adapter: Any,
+        alert_channel: Any | None = None,
+    ) -> None:
+        self.watchdog_engine = watchdog_engine
+        self.sonos_adapter = sonos_adapter
+        self.alert_channel = alert_channel
+
+    async def handle_snapshot(
+        self,
+        snapshot: HouseholdSonosSnapshot,
+        repo: Any | None = None,
+        now: datetime | None = None,
+    ) -> list[WatchdogAlert]:
+        alerts = self.watchdog_engine.evaluate_snapshot(snapshot, now=now)
+        for alert in alerts:
+            if (
+                alert.anomaly_type == WatchdogAnomalyType.GHOST_GROUP
+                and not alert.cleared
+                and self.watchdog_engine.is_auto_heal_enabled()
+            ):
+                try:
+                    logger.info("Executing autonomous UPnP Ghost Group flush for zone %s...", alert.entity_id)
+                    flush_res = await self.sonos_adapter.flush_ghost_groups()
+                    if repo is not None:
+                        # Atomic PostgreSQL synchronization (P3-F-02)
+                        await repo.apply_ghost_flush(flush_res)
+                    self.watchdog_engine.record_auto_heal(alert.incident_key)
+                    alert.auto_healed = True
+                except Exception as err:
+                    logger.error("Auto-heal flush failed for zone %s: %s", alert.entity_id, err)
+
+            if self.alert_channel is not None:
+                await self.alert_channel.send_alert(alert)
+
+        return alerts
+
