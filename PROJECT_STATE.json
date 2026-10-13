@@ -111,28 +111,28 @@
         {
           "stage": "plan",
           "round": 1,
-          "reviewer": "2f47a262-0f24-4416-b3d8-9b0a961f5ec8 (Independent Plan Gate Auditor)",
-          "findings_count": 6,
-          "findings": ["P2-F-01", "P2-F-02", "P2-F-03", "P2-F-04", "P2-F-05", "P2-F-06"],
-          "fixes": "Resolved P2-F-01 (1 fresh active scan probe per room survey tap, EXTRA_RESULTS_UPDATED == true & timestamp freshness check, visible rate-limit countdown dialog without reading stale cache), P2-F-02 (band-dependent centerFreq0 mapping to prevent negative channels on 2.4 GHz 40 MHz networks), P2-F-03 (added getHouseDiagnostics and getRoomDiagnostics to SonosNetworkClientPort), P2-F-04 (added connected_ssid, frequency_mhz, and trigger_mode = 'STORE_AND_FORWARD' to PendingSurveyEntity and backend schema), P2-F-05 (explicit Kotlin DTO contracts BssidReadingInputDto and RoomSurveyInputDto matching backend Pydantic schemas), and P2-F-06 (added android.permission.NEARBY_WIFI_DEVICES for Android 13+).",
+          "reviewer": "713e737e-b263-4c26-9575-96b44b2eb067 & 2f47a262-0f24-4416-b3d8-9b0a961f5ec8 (Independent Plan Gate Auditors)",
+          "findings_count": 11,
+          "findings": ["F-01", "F-02", "F-03", "F-04", "F-05", "F-06", "F-07", "F-08", "F-09", "F-10", "F-11"],
+          "fixes": "Resolved F-01 (timestamp preservation & client_survey_id idempotency in backend & spec), F-02 & F-03 (single-shot walkthrough probe awaiting OS broadcast with 10s timeout, EXTRA_RESULTS_UPDATED == true & timestamp freshness check), F-04 (dead-zone empty readings support without server fallback), F-05 (5 GHz UNII-3 channel mapping), F-06 (channel width & center channel extraction), F-07 (getRoomDiagnostics and getSurveyDelta methods on client port), F-08 (LiveRfFrameDto wrapper envelope), F-09 (NEARBY_WIFI_DEVICES and Location Services toggle guard), F-10 (IP-routed 192.168.55.60:8001 / FQDN endpoint over WireGuard), and F-11 (asymmetric multi-sample RSSI averaging across detected samples).",
           "outstanding": []
         },
         {
           "stage": "plan",
           "round": 2,
-          "reviewer": "f6555a35-eac5-4d7a-9e35-13cc2a58ad90 (Independent Plan Gate Auditor)",
-          "findings_count": 1,
-          "findings": ["P2-R2-F-01"],
-          "fixes": "Resolved P2-R2-F-01: synchronized GLOSSARY.md:73 SingleShotProbe definition with phase-2-android-app-spec.md and ADR-0005 to specify a single fresh active probe with EXTRA_RESULTS_UPDATED == true and timestamp freshness validation, respecting Android 10+ 4-scans/2-minute throttling.",
+          "reviewer": "1197c792-a5a2-498f-8527-65427d6f9476 & f6555a35-eac5-4d7a-9e35-13cc2a58ad90 (Independent Plan Gate Auditors)",
+          "findings_count": 3,
+          "findings": ["BF-01", "BF-02", "BF-03"],
+          "fixes": "Resolved BF-01 (band-conditioned center channel calculation for 2.4 GHz HT40), BF-02 (GLOSSARY.md SingleShotProbe definition synchronized), and BF-03 (GLOSSARY.md DualEndpointMode definition synchronized with IP/FQDN WireGuard routing).",
           "outstanding": []
         },
         {
           "stage": "plan",
           "round": 3,
-          "reviewer": "9dadcc89-4482-4efc-9bfa-27409d943bdb (Independent Plan Gate Auditor)",
+          "reviewer": "8d8a856b-f12e-452f-8117-ea191cd3d324 & 9dadcc89-4482-4efc-9bfa-27409d943bdb (Independent Plan Gate Auditors)",
           "findings_count": 0,
           "findings": [],
-          "fixes": "Verified P2-R2-F-01 fix clean. SingleShotProbe definition in GLOSSARY.md is fully synchronized with phase-2-android-app-spec.md, ADR-0005, and AGENTS.md. Plan Gate Audit passed cleanly.",
+          "fixes": "Verified all fixes and cross-document interactions clean. All 35 backend tests pass. Plan Gate Audit passed cleanly.",
           "outstanding": []
         }
       ]

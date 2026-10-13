@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import re
 import uuid
 from typing import Protocol
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entities import (
@@ -662,8 +662,64 @@ class SqlAlchemyTopologyRepository:
         if not room:
             return None
 
-        if payload.readings is not None and len(payload.readings) > 0:
+        # Check idempotency if client_survey_id is supplied
+        if payload.client_survey_id:
+            survey_slug = f"{room.slug}-survey-{payload.client_survey_id}"
+            existing_res = await self._session.execute(
+                select(WiFiRoomSurvey).where(WiFiRoomSurvey.survey_slug == survey_slug)
+            )
+            existing_row = existing_res.scalar_one_or_none()
+            if existing_row:
+                readings_res = await self._session.execute(
+                    select(BssidReading).where(BssidReading.survey_id == existing_row.id)
+                )
+                existing_readings = [
+                    BssidReadingSchema(
+                        id=br.id,
+                        bssid=br.bssid,
+                        ssid=br.ssid,
+                        band=br.band,
+                        channel=br.channel,
+                        center_channel=br.center_channel,
+                        width_mhz=br.width_mhz,
+                        rssi_dbm=br.rssi_dbm,
+                        classification=br.classification,
+                        ap_device_slug=br.ap_device_slug,
+                        ap_name=br.ap_name,
+                        is_connected=br.is_connected,
+                    )
+                    for br in readings_res.scalars().all()
+                ]
+                existing_readings.sort(key=lambda r: r.rssi_dbm, reverse=True)
+                return WiFiRoomSurveySchema(
+                    id=existing_row.id,
+                    survey_slug=existing_row.survey_slug,
+                    room_id=existing_row.room_id,
+                    room_slug=existing_row.room_slug,
+                    room_name=existing_row.room_name,
+                    label=existing_row.label,
+                    trigger_mode=existing_row.trigger_mode,
+                    captured_at=existing_row.captured_at,
+                    connected_bssid=existing_row.connected_bssid,
+                    connected_ssid=existing_row.connected_ssid,
+                    link_speed_mbps=existing_row.link_speed_mbps,
+                    frequency_mhz=existing_row.frequency_mhz,
+                    best_5ghz_dbm=existing_row.best_5ghz_dbm,
+                    best_24ghz_dbm=existing_row.best_24ghz_dbm,
+                    best_ap_slug=existing_row.best_ap_slug,
+                    best_ap_name=existing_row.best_ap_name,
+                    rogue_count=existing_row.rogue_count,
+                    neighbor_count=existing_row.neighbor_count,
+                    grade_5ghz=existing_row.grade_5ghz,
+                    grade_24ghz=existing_row.grade_24ghz,
+                    wifi_health_grade=existing_row.wifi_health_grade,
+                    notes=existing_row.notes,
+                    readings=existing_readings,
+                )
+        else:
             survey_slug = f"{room.slug}-survey-{uuid.uuid4().hex[:8]}"
+
+        if payload.readings is not None:
             built = build_wifi_room_survey(
                 room_slug=room.slug,
                 room_name=room.name,
@@ -692,6 +748,8 @@ class SqlAlchemyTopologyRepository:
             built.room_name = room.name
             if payload.notes:
                 built.notes = payload.notes
+            if payload.captured_at:
+                built.captured_at = payload.captured_at
 
         survey_row = WiFiRoomSurvey(
             survey_slug=built.survey_slug,
@@ -739,9 +797,19 @@ class SqlAlchemyTopologyRepository:
             )
             self._session.add(br_row)
 
-        if built.best_5ghz_dbm is not None:
+        # Update room's best RSSI only if this survey is the newest or equal to latest
+        latest_ts_res = await self._session.execute(
+            select(func.max(WiFiRoomSurvey.captured_at)).where(WiFiRoomSurvey.room_id == room.id)
+        )
+        max_ts = latest_ts_res.scalar()
+        if max_ts is not None and max_ts.tzinfo is None:
+            max_ts = max_ts.replace(tzinfo=timezone.utc)
+        built_ts = built.captured_at
+        if built_ts.tzinfo is None:
+            built_ts = built_ts.replace(tzinfo=timezone.utc)
+
+        if max_ts is None or built_ts >= max_ts:
             room.best_5ghz_rssi_dbm = built.best_5ghz_dbm
-        if built.best_24ghz_dbm is not None:
             room.best_24ghz_rssi_dbm = built.best_24ghz_dbm
 
         await self._session.commit()
