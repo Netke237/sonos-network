@@ -163,8 +163,9 @@
       "issue": 30,
       "plan_audit_rounds": 2,
       "plan_audit_clean": true,
-      "code_audit_rounds": 1,
-      "audit_clean": false,
+      "code_audit_rounds": 3,
+      "audit_clean": true,
+      "status": "completed",
       "rounds": [
         {
           "stage": "plan",
@@ -187,10 +188,28 @@
         {
           "stage": "code",
           "round": 1,
-          "reviewer": "fa175c03-5af0-40bd-b4d4-f2c49a62454d (Independent Code Gate Auditor)",
-          "findings_count": 5,
-          "findings": ["P3-CF-01", "P3-CF-02", "P3-CF-03", "P3-CF-04", "P3-CF-05"],
-          "fixes": "Escalated threshold (>3 critical findings) to Kenneth and resolved all 5 findings: P3-CF-01 (null-safe formatting for ofdm_ani_level and phy_error_rate in EMI burst description), P3-CF-02 (scanning players first to report true rogue root MAC rather than self-accusing Wohnzimmer_Bookshelf), P3-CF-03 (HTML escaping and parse_mode=HTML for Telegram alerts to prevent underscore entity parsing crashes on living room speaker names and UUIDs), P3-CF-04 (AutoHealCoordinator looks up target player IP and passes zone_ips to flush_ghost_groups to prevent household-wide playback group dissolution), and P3-CF-05 (added production Mini PC path backend/app/static/apk/ to apk_candidates in download_companion_apk).",
+          "reviewer": "d39a4e8f-541e-4fed-8cde-dc7bf57d10e4 (Independent Code Gate Auditor)",
+          "findings_count": 10,
+          "findings": ["P3-CF-01", "P3-CF-02", "P3-CF-03", "P3-CF-04", "P3-CF-05", "P3-CF-06", "P3-CF-07", "P3-CF-08", "P3-CF-09", "P3-CF-10"],
+          "fixes": "Resolved all 10 findings: null-safe format strings, rogue MAC scan for STP root usurpation, underscore markdown escaping and plain-text fallback for Telegram, static APK download candidates, API_BASE in InstallModal, single UPnP flush per cycle, localhost QR code fallback to MINI_PC_HOST, deduplicated ghost zones union, auto-healed incident exclusion from active faults, and remediation_guide/resolved_at field additions in WatchdogAlert.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 2,
+          "reviewer": "218c0bcc-4bb3-42fb-bf29-24a51c0858ce (Independent Code Gate Auditor)",
+          "findings_count": 6,
+          "findings": ["P3-R2-01", "P3-R2-02", "P3-R2-03", "P3-R2-04", "P3-R2-05", "P3-R2-06"],
+          "fixes": "Resolved all 6 findings: gated STP_ROOT_USURPED alert to only fire when observed root deviates from root_mac_prefix (P3-R2-01), auto-healed persistent fault reset and immediate [PERSISTENT] re-alerting (P3-R2-02), verified UPnP flush results before marking alerts auto_healed (P3-R2-03), removed unconditional ghost group clearing for unsanitized players in apply_ghost_flush (P3-R2-04), set resolved_at to detected_at timestamp (P3-R2-05), and added chmod +x gradlew step in Android release workflow plus git executable bit (P3-R2-06).",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 3,
+          "reviewer": "fd7117d7-3ebe-4522-b841-086783cdd649 (Independent Code Gate Auditor)",
+          "findings_count": 0,
+          "findings": [],
+          "fixes": "Verified all Round 2 fixes clean across watchdog_engine.py, topology_repository.py, main.py, android-release.yml, and test suites. All 61 backend pytest tests and 23 frontend vitest tests pass. Zero blocking findings.",
           "outstanding": []
         }
       ]
