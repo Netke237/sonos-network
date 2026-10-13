@@ -1,7 +1,7 @@
 {
   "project": "sonos-network",
   "repo": "Netke237/sonos-network",
-  "active_phase": "PHASE-1.5-UX-REDESIGN",
+  "active_phase": "PHASE-2-ANDROID-APP",
   "audit_rule": {
     "max_rounds_per_stage": 3,
     "gate_criteria": [
@@ -96,15 +96,67 @@
           "outstanding": []
         }
       ]
+    },
+    {
+      "id": "PHASE-2-ANDROID-APP",
+      "title": "Native Android Room Scanner & Topology Companion App",
+      "status": "waiting-merge",
+      "branch": "board/phase-2-android-app-70ec5581",
+      "issue": 23,
+      "plan_audit_rounds": 3,
+      "plan_audit_clean": true,
+      "code_audit_rounds": 2,
+      "audit_clean": true,
+      "rounds": [
+        {
+          "stage": "plan",
+          "round": 1,
+          "reviewer": "713e737e-b263-4c26-9575-96b44b2eb067 & 2f47a262-0f24-4416-b3d8-9b0a961f5ec8 (Independent Plan Gate Auditors)",
+          "findings_count": 11,
+          "findings": ["F-01", "F-02", "F-03", "F-04", "F-05", "F-06", "F-07", "F-08", "F-09", "F-10", "F-11"],
+          "fixes": "Resolved F-01 (timestamp preservation & client_survey_id idempotency in backend & spec), F-02 & F-03 (single-shot walkthrough probe awaiting OS broadcast with 10s timeout, EXTRA_RESULTS_UPDATED == true & timestamp freshness check), F-04 (dead-zone empty readings support without server fallback), F-05 (5 GHz UNII-3 channel mapping), F-06 (channel width & center channel extraction), F-07 (getRoomDiagnostics and getSurveyDelta methods on client port), F-08 (LiveRfFrameDto wrapper envelope), F-09 (NEARBY_WIFI_DEVICES and Location Services toggle guard), F-10 (IP-routed 192.168.55.60:8001 / FQDN endpoint over WireGuard), and F-11 (asymmetric multi-sample RSSI averaging across detected samples).",
+          "outstanding": []
+        },
+        {
+          "stage": "plan",
+          "round": 2,
+          "reviewer": "1197c792-a5a2-498f-8527-65427d6f9476 & f6555a35-eac5-4d7a-9e35-13cc2a58ad90 (Independent Plan Gate Auditors)",
+          "findings_count": 3,
+          "findings": ["BF-01", "BF-02", "BF-03"],
+          "fixes": "Resolved BF-01 (band-conditioned center channel calculation for 2.4 GHz HT40), BF-02 (GLOSSARY.md SingleShotProbe definition synchronized), and BF-03 (GLOSSARY.md DualEndpointMode definition synchronized with IP/FQDN WireGuard routing).",
+          "outstanding": []
+        },
+        {
+          "stage": "plan",
+          "round": 3,
+          "reviewer": "8d8a856b-f12e-452f-8117-ea191cd3d324 & 9dadcc89-4482-4efc-9bfa-27409d943bdb (Independent Plan Gate Auditors)",
+          "findings_count": 0,
+          "findings": [],
+          "fixes": "Verified all fixes and cross-document interactions clean. All 35 backend tests pass. Plan Gate Audit passed cleanly.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 1,
+          "reviewer": "71205116-b6fd-4086-9f97-b3d6829fe69c (Independent Code Gate Auditor)",
+          "findings_count": 6,
+          "findings": ["P2-CF-01", "P2-CF-02", "P2-CF-03", "P2-CF-04", "P2-CF-05", "P2-CF-06"],
+          "fixes": "Escalated threshold (>3 critical findings) to Kenneth and resolved all 6 findings in commit 273e8e1: P2-CF-01 (client_survey_id UUID in RoomSurveyInputDto, PendingSurveyEntity, SQLite schema, AutoSyncCoordinator, and WalkthroughViewModel for idempotent deduplication), P2-CF-02 (LiveRfFrameDto timestamp fallback & defaults for WebSocket frame ingestion), P2-CF-03 (DEFAULT_FIREWALLA_VPN_URL static IP 192.168.55.60:8001), P2-CF-04 (dynamic TopologyCanvasView live nodes, directed layer edges, STP states & tap interactions), P2-CF-05 (removed neverForLocation flag from NEARBY_WIFI_DEVICES), and P2-CF-06 (LocationManager.isLocationEnabled check).",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 2,
+          "reviewer": "743699f0-0436-40a2-8838-00ce36e789a1 (Independent Code Gate Auditor)",
+          "findings_count": 0,
+          "findings": [],
+          "fixes": "Verified all Round 1 fixes clean. All 45 Android unit tests, 35 backend tests, and 21 frontend tests pass. Code Gate Audit passed cleanly with 0 findings.",
+          "outstanding": []
+        }
+      ]
     }
   ],
   "task_backlog": {
-    "items": [
-      {
-        "id": "PHASE-2-ANDROID-APP",
-        "title": "Native Android Room Scanner & Topology Companion App",
-        "status": "backlog"
-      }
-    ]
+    "items": []
   }
 }
