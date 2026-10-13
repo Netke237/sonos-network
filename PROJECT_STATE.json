@@ -163,7 +163,7 @@
       "issue": 30,
       "plan_audit_rounds": 2,
       "plan_audit_clean": true,
-      "code_audit_rounds": 0,
+      "code_audit_rounds": 1,
       "audit_clean": false,
       "rounds": [
         {
@@ -182,6 +182,15 @@
           "findings_count": 0,
           "findings": [],
           "fixes": "Verified all Round 1 fixes P3-F-01 through P3-F-06 clean across spec, ADR-0006, GLOSSARY.md, and backend codebase. Plan Gate Audit passed cleanly with 0 findings.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 1,
+          "reviewer": "fa175c03-5af0-40bd-b4d4-f2c49a62454d (Independent Code Gate Auditor)",
+          "findings_count": 5,
+          "findings": ["P3-CF-01", "P3-CF-02", "P3-CF-03", "P3-CF-04", "P3-CF-05"],
+          "fixes": "Escalated threshold (>3 critical findings) to Kenneth and resolved all 5 findings: P3-CF-01 (null-safe formatting for ofdm_ani_level and phy_error_rate in EMI burst description), P3-CF-02 (scanning players first to report true rogue root MAC rather than self-accusing Wohnzimmer_Bookshelf), P3-CF-03 (HTML escaping and parse_mode=HTML for Telegram alerts to prevent underscore entity parsing crashes on living room speaker names and UUIDs), P3-CF-04 (AutoHealCoordinator looks up target player IP and passes zone_ips to flush_ghost_groups to prevent household-wide playback group dissolution), and P3-CF-05 (added production Mini PC path backend/app/static/apk/ to apk_candidates in download_companion_apk).",
           "outstanding": []
         }
       ]

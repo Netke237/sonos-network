@@ -47,6 +47,7 @@ def _make_ghost_snapshot(now: datetime) -> HouseholdSonosSnapshot:
         noise_floor_dbm=-105,
         phy_error_total=5,
         phy_error_rate=0.5,
+        ip_address="192.168.10.150",
         designated_root="9000.542a1b63fe6e",
         is_ghost_group=True,
     )
@@ -106,8 +107,8 @@ async def test_auto_heal_coordinator_triggers_flush_and_db_sync():
     assert alert.anomaly_type == WatchdogAnomalyType.GHOST_GROUP
     assert alert.auto_healed is True
 
-    # 1. UPnP flush executed within 5s
-    sonos_adapter.flush_ghost_groups.assert_awaited_once()
+    # 1. UPnP flush executed targeting ONLY affected zone IP (P3-CF-04)
+    sonos_adapter.flush_ghost_groups.assert_awaited_once_with(zone_ips=["192.168.10.150"])
 
     # 2. Atomic PostgreSQL synchronization executed (P3-F-02)
     repo_mock.apply_ghost_flush.assert_awaited_once_with(fake_flush)

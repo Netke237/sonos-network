@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 import os
 from typing import Protocol
@@ -11,24 +12,25 @@ logger = logging.getLogger("sonos_network.telegram_alerts")
 
 
 def format_telegram_alert_card(alert: WatchdogAlert) -> str:
+    escaped_title = html.escape(alert.title)
     if alert.cleared:
-        header = f"✅ *[RESOLVED] {alert.title}*"
+        header = f"✅ <b>[RESOLVED] {escaped_title}</b>"
     elif alert.auto_healed:
-        header = f"⚡ *[AUTO-HEALED] {alert.title}*"
+        header = f"⚡ <b>[AUTO-HEALED] {escaped_title}</b>"
     elif alert.severity == "CRITICAL":
-        header = f"🚨 *[CRITICAL] {alert.title}*"
+        header = f"🚨 <b>[CRITICAL] {escaped_title}</b>"
     elif alert.severity == "MARGINAL":
-        header = f"⚠️ *[WARNING] {alert.title}*"
+        header = f"⚠️ <b>[WARNING] {escaped_title}</b>"
     else:
-        header = f"ℹ️ *[INFO] {alert.title}*"
+        header = f"ℹ️ <b>[INFO] {escaped_title}</b>"
 
     lines = [
         header,
         "",
-        f"📍 *Entity:* {alert.entity_id}",
-        f"⏱ *Time:* {alert.detected_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
-        f"📝 *Detail:* {alert.description}",
-        f"🛠 *Action:* {alert.action_required}",
+        f"📍 <b>Entity:</b> <code>{html.escape(alert.entity_id)}</code>",
+        f"⏱ <b>Time:</b> {alert.detected_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
+        f"📝 <b>Detail:</b> {html.escape(alert.description)}",
+        f"🛠 <b>Action:</b> {html.escape(alert.action_required)}",
     ]
     return "\n".join(lines)
 
@@ -69,7 +71,7 @@ class TelegramAlertAdapter:
         payload = {
             "chat_id": self.chat_id,
             "text": text,
-            "parse_mode": "Markdown",
+            "parse_mode": "HTML",
         }
 
         try:

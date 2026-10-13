@@ -662,6 +662,9 @@ def create_app(
     @app.get("/api/companion/apk")
     async def download_companion_apk() -> Response:
         apk_candidates = [
+            Path("backend/app/static/apk/sonos-network-companion.apk"),
+            Path("backend/app/static/apk/app-release.apk"),
+            Path("backend/app/static/apk/app-debug.apk"),
             Path("android/app/build/outputs/apk/debug/app-debug.apk"),
             Path("android/app/build/outputs/apk/release/app-release.apk"),
             Path("dist/sonos-network-companion.apk"),

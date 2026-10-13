@@ -156,14 +156,18 @@ class WatchdogEngine:
         is_usurped = False
         observed_root = designated_root
 
-        if snapshot.is_root_healthy is False or not designated_root.lower().startswith(root_mac_prefix):
-            is_usurped = True
-        else:
-            for p in snapshot.players:
-                if p.designated_root and not p.designated_root.strip().lower().startswith(root_mac_prefix):
-                    is_usurped = True
-                    observed_root = p.designated_root.strip()
-                    break
+        # Scan players first to locate actual rogue root MAC if any player reports divergence (P3-CF-02)
+        for p in snapshot.players:
+            if p.designated_root and not p.designated_root.strip().lower().startswith(root_mac_prefix):
+                is_usurped = True
+                observed_root = p.designated_root.strip()
+                break
+
+        if not is_usurped:
+            if not designated_root.lower().startswith(root_mac_prefix):
+                is_usurped = True
+            elif snapshot.is_root_healthy is False:
+                is_usurped = True
 
         if is_usurped:
             # Consolidate household into single incident key (P3-F-05)
@@ -177,7 +181,7 @@ class WatchdogEngine:
                 "action_required": "Unplug Ethernet from rogue node (Keller) or disable Wi-Fi/SonosNet on secondary wired leaf; preserve Wohnzimmer_Bookshelf as sole root bridge.",
             }
 
-        # 3. Evaluate EMI Burst (Null-safe Atheros evaluation, P3-F-03)
+        # 3. Evaluate EMI Burst (Null-safe Atheros evaluation, P3-F-03 / P3-CF-01)
         for p in snapshot.players:
             has_emi = (p.ofdm_ani_level is not None and p.ofdm_ani_level >= 7) or (
                 p.phy_error_rate is not None and p.phy_error_rate > 100.0
@@ -188,12 +192,14 @@ class WatchdogEngine:
                 severity = "CRITICAL" if (p.phy_error_rate is not None and p.phy_error_rate > 100.0) or (
                     p.ofdm_ani_level is not None and p.ofdm_ani_level >= 8
                 ) else "MARGINAL"
+                ani_desc = f"OFDM ANI {p.ofdm_ani_level}" if p.ofdm_ani_level is not None else "OFDM ANI N/A"
+                phy_desc = f"{p.phy_error_rate:.1f} PHY err/s" if p.phy_error_rate is not None else "PHY err/s N/A"
                 current_detected[key] = {
                     "anomaly_type": WatchdogAnomalyType.EMI_BURST,
                     "entity_id": speaker,
                     "severity": severity,
                     "title": f"Severe 2.4 GHz EMI Burst on {speaker}",
-                    "description": f"Player '{speaker}' recorded OFDM ANI {p.ofdm_ani_level} and {p.phy_error_rate:.1f} PHY err/s, risking DPC volume ducking and packet drops.",
+                    "description": f"Player '{speaker}' recorded {ani_desc} and {phy_desc}, risking DPC volume ducking and packet drops.",
                     "action_required": "Inspect local USB-C docks / power supplies near speaker; relocate speaker 1-2m laterally.",
                 }
 
@@ -317,12 +323,22 @@ class AutoHealCoordinator:
             ):
                 try:
                     logger.info("Executing autonomous UPnP Ghost Group flush for zone %s...", alert.entity_id)
-                    flush_res = await self.sonos_adapter.flush_ghost_groups()
+                    target_player = next(
+                        (
+                            p
+                            for p in snapshot.players
+                            if (p.zone_name or p.room_name or p.rincon_uuid) == alert.entity_id
+                        ),
+                        None,
+                    )
+                    target_ips = [target_player.ip_address] if (target_player and target_player.ip_address) else None
+                    flush_res = await self.sonos_adapter.flush_ghost_groups(zone_ips=target_ips)
                     if repo is not None:
                         # Atomic PostgreSQL synchronization (P3-F-02)
                         await repo.apply_ghost_flush(flush_res)
                     self.watchdog_engine.record_auto_heal(alert.incident_key)
                     alert.auto_healed = True
+                    alert.action_required = "None. Automatically sanitized via UPnP BecomeCoordinatorOfStandaloneGroup."
                 except Exception as err:
                     logger.error("Auto-heal flush failed for zone %s: %s", alert.entity_id, err)
 

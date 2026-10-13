@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import pytest
 from httpx import AsyncClient, ASGITransport
 import httpx
+import json
 
 from app.main import app
 from app.modules.watchdog_engine import WatchdogAlert, WatchdogAnomalyType
@@ -22,10 +23,30 @@ def test_format_telegram_alert_card():
     )
 
     card = format_telegram_alert_card(alert)
-    assert "🚨 *[CRITICAL] STP Root Bridge Usurped: 9000.5caafd595eea*" in card
-    assert "📍 *Entity:* household" in card
-    assert "📝 *Detail:* Observed STP Designated Root usurped Wohnzimmer_Bookshelf." in card
-    assert "🛠 *Action:* Unplug Ethernet from Keller Play:3." in card
+    assert "🚨 <b>[CRITICAL] STP Root Bridge Usurped: 9000.5caafd595eea</b>" in card
+    assert "📍 <b>Entity:</b> <code>household</code>" in card
+    assert "📝 <b>Detail:</b> Observed STP Designated Root usurped Wohnzimmer_Bookshelf." in card
+    assert "🛠 <b>Action:</b> Unplug Ethernet from Keller Play:3." in card
+
+
+def test_format_telegram_alert_card_with_underscores_and_html_special_chars():
+    now = datetime(2026, 10, 13, 14, 0, 0, tzinfo=timezone.utc)
+    alert = WatchdogAlert(
+        incident_key="EMI_BURST:Wohnzimmer_Buchregal",
+        anomaly_type=WatchdogAnomalyType.EMI_BURST,
+        severity="CRITICAL",
+        title="Severe 2.4 GHz EMI Burst on Wohnzimmer_Buchregal",
+        description="Player 'Wohnzimmer_Buchregal' recorded OFDM ANI 9 and 1126.0 PHY err/s <high>",
+        action_required="Inspect dock & power supplies; relocate speaker.",
+        entity_id="Wohnzimmer_Buchregal",
+        detected_at=now,
+    )
+
+    card = format_telegram_alert_card(alert)
+    # Underscores are preserved, HTML tags escaped
+    assert "<code>Wohnzimmer_Buchregal</code>" in card
+    assert "&lt;high&gt;" in card
+    assert "dock &amp; power supplies" in card
 
 
 @pytest.mark.asyncio
@@ -55,6 +76,9 @@ async def test_telegram_adapter_send_success():
 
     def mock_handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["parse_mode"] == "HTML"
+        assert payload["chat_id"] == chat_id
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
 
     transport = httpx.MockTransport(mock_handler)
@@ -68,13 +92,13 @@ async def test_telegram_adapter_send_success():
         assert adapter.is_configured() is True
 
         alert = WatchdogAlert(
-            incident_key="GHOST_GROUP:Küche",
+            incident_key="GHOST_GROUP:Wohnzimmer_Bookshelf",
             anomaly_type=WatchdogAnomalyType.GHOST_GROUP,
             severity="CRITICAL",
-            title="Ghost Group on Küche",
+            title="Ghost Group on Wohnzimmer_Bookshelf",
             description="Ghost group detected",
             action_required="Flush group",
-            entity_id="Küche",
+            entity_id="Wohnzimmer_Bookshelf",
         )
 
         sent = await adapter.send_alert(alert)

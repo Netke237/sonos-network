@@ -118,6 +118,20 @@ def test_stp_root_usurpation_detection_and_formatting_safety():
     assert alert.entity_id == "household"
     assert "9000.5caafd595eea" in alert.description or "9000.5caafd595eea" in alert.title
 
+    # 3. Rogue player root divergence when designated_stp_root string still reports Wohnzimmer_Bookshelf (P3-CF-02)
+    engine_divergent = WatchdogEngine(debounce_seconds=900.0)
+    divergent_snapshot = _make_dummy_snapshot(
+        [healthy_player, rogue_player],
+        designated_stp_root="9000.542a1b63fe6e (Wohnzimmer_Bookshelf 192.168.10.230)",
+        is_root_healthy=False,
+        now=now,
+    )
+    divergent_alerts = engine_divergent.evaluate_snapshot(divergent_snapshot, now=now)
+    assert len(divergent_alerts) == 1
+    # Observed root MUST identify the rogue MAC (9000.5caafd595eea), not falsely accuse Wohnzimmer_Bookshelf
+    assert "9000.5caafd595eea" in divergent_alerts[0].title
+    assert "9000.5caafd595eea" in divergent_alerts[0].description
+
 
 def test_emi_burst_detection_and_null_safety():
     engine = WatchdogEngine(debounce_seconds=900.0)
@@ -139,15 +153,26 @@ def test_emi_burst_detection_and_null_safety():
         ofdm_ani_level=9,
         phy_error_rate=1126.0,
     )
+    # Player 3: Speaker with severe ANI 8 but None for phy_error_rate (P3-CF-01)
+    rebooted = _make_dummy_player(
+        "RINCON_REBOOTED",
+        "Büroecke",
+        "Büroecke",
+        ofdm_ani_level=8,
+        phy_error_rate=None,
+    )
 
-    snapshot = _make_dummy_snapshot([beam, buchregal], now=now)
+    snapshot = _make_dummy_snapshot([beam, buchregal, rebooted], now=now)
     alerts = engine.evaluate_snapshot(snapshot, now=now)
 
-    assert len(alerts) == 1
-    alert = alerts[0]
-    assert alert.anomaly_type == WatchdogAnomalyType.EMI_BURST
-    assert alert.entity_id == "Wohnzimmer_Buchregal"
-    assert "Wohnzimmer_Buchregal" in alert.title
+    assert len(alerts) == 2
+    alert_names = {a.entity_id for a in alerts}
+    assert "Wohnzimmer_Buchregal" in alert_names
+    assert "Büroecke" in alert_names
+
+    rebooted_alert = next(a for a in alerts if a.entity_id == "Büroecke")
+    assert "OFDM ANI 8" in rebooted_alert.description
+    assert "PHY err/s N/A" in rebooted_alert.description
 
 
 def test_player_offline_detection():
