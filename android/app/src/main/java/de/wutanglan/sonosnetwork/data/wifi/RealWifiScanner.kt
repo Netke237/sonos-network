@@ -11,7 +11,9 @@ import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.SystemClock
+import android.location.LocationManager
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
@@ -38,7 +40,12 @@ class RealWifiScanner(
             true
         }
 
-        return fineLocation && nearbyWifi
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        val locationEnabled = locationManager?.let {
+            LocationManagerCompat.isLocationEnabled(it)
+        } ?: false
+
+        return fineLocation && nearbyWifi && locationEnabled
     }
 
     override fun getThrottleCooldownRemainingSec(): Int {

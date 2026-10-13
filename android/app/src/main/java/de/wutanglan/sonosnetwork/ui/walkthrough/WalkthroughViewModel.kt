@@ -165,10 +165,12 @@ class WalkthroughViewModel(
                 )
             }
 
+            val clientSurveyId = java.util.UUID.randomUUID().toString()
             val payload = RoomSurveyInputDto(
                 label = "Android Walkthrough",
                 trigger_mode = "MANUAL_SURVEY",
                 captured_at = capturedAt,
+                client_survey_id = clientSurveyId,
                 connected_bssid = scanResult.connected_bssid,
                 connected_ssid = scanResult.connected_ssid,
                 link_speed_mbps = scanResult.link_speed_mbps,
@@ -186,6 +188,7 @@ class WalkthroughViewModel(
                 // Network failed -> Store and forward in local queue
                 val readingsJson = json.encodeToString(readingsDto)
                 val entity = PendingSurveyEntity(
+                    client_survey_id = clientSurveyId,
                     room_slug = currentRoom,
                     timestamp = capturedAt,
                     label = "Android Walkthrough (Offline)",

@@ -3,6 +3,7 @@ package de.wutanglan.sonosnetwork.ui.health
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,12 +17,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.wutanglan.sonosnetwork.data.models.FloorMatrixItemDto
 import de.wutanglan.sonosnetwork.data.models.RoomMatrixItemDto
+import de.wutanglan.sonosnetwork.data.models.TopologyGraphDto
 
 @Composable
 fun HouseHealthScreen(
@@ -130,8 +133,7 @@ fun HouseHealthScreen(
         } else {
             // View Mode 2: Interactive Pan / Zoom Topological Canvas
             TopologyCanvasView(
-                nodesCount = state.topology?.total_nodes ?: 0,
-                edgesCount = state.topology?.total_edges ?: 0,
+                topology = state.topology,
                 onNodeClick = { slug -> viewModel.openRoomDiagnostic(slug) }
             )
         }
@@ -227,20 +229,87 @@ fun RoomItemCard(
 
 @Composable
 fun TopologyCanvasView(
-    nodesCount: Int,
-    edgesCount: Int,
+    topology: TopologyGraphDto?,
     onNodeClick: (String) -> Unit
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
 
+    val nodes = topology?.nodes ?: emptyList()
+    val edges = topology?.edges ?: emptyList()
+
+    // Calculate node base layout offsets
+    val nodeBaseCoords = remember(topology) {
+        if (nodes.isEmpty()) return@remember emptyMap<String, Offset>()
+
+        val hasNonZeroCoords = nodes.any { (it.pos_x > 0f || it.x > 0f) && (it.pos_y > 0f || it.y > 0f) }
+        if (hasNonZeroCoords) {
+            val minX = nodes.map { if (it.pos_x > 0f) it.pos_x else it.x }.minOrNull() ?: 0f
+            val maxX = nodes.map { if (it.pos_x > 0f) it.pos_x else it.x }.maxOrNull() ?: 1000f
+            val minY = nodes.map { if (it.pos_y > 0f) it.pos_y else it.y }.minOrNull() ?: 0f
+            val maxY = nodes.map { if (it.pos_y > 0f) it.pos_y else it.y }.maxOrNull() ?: 800f
+            val spanX = (maxX - minX).coerceAtLeast(100f)
+            val spanY = (maxY - minY).coerceAtLeast(100f)
+
+            nodes.associate { n ->
+                val nx = if (n.pos_x > 0f) n.pos_x else n.x
+                val ny = if (n.pos_y > 0f) n.pos_y else n.y
+                val normX = ((nx - minX) / spanX - 0.5f) * 650f
+                val normY = ((ny - minY) / spanY - 0.5f) * 550f
+                n.slug to Offset(normX, normY)
+            }
+        } else {
+            // Radial layout fallback
+            val rootNode = nodes.find { it.is_stp_root || it.device_role == "ROUTER" }
+            val otherNodes = nodes.filter { it != rootNode }
+            val map = mutableMapOf<String, Offset>()
+            if (rootNode != null) {
+                map[rootNode.slug] = Offset(0f, -140f)
+            }
+            val count = otherNodes.size.coerceAtLeast(1)
+            otherNodes.forEachIndexed { idx, n ->
+                val angle = (2.0 * Math.PI * idx / count).toFloat()
+                val rx = kotlin.math.cos(angle) * 220f
+                val ry = kotlin.math.sin(angle) * 160f + 30f
+                map[n.slug] = Offset(rx, ry)
+            }
+            map
+        }
+    }
+
+    val textPaint = remember {
+        android.graphics.Paint().apply {
+            color = android.graphics.Color.WHITE
+            textAlign = android.graphics.Paint.Align.CENTER
+            isAntiAlias = true
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF181818), shape = RoundedCornerShape(12.dp))
+            .pointerInput(topology, scale, offset) {
+                detectTapGestures { tapOffset ->
+                    val w = size.width
+                    val h = size.height
+                    val cx = (w / 2) + offset.x
+                    val cy = (h / 2) + offset.y
+
+                    val tappedNode = nodes.find { node ->
+                        val base = nodeBaseCoords[node.slug] ?: Offset.Zero
+                        val screenPos = Offset(cx + (base.x * scale), cy + (base.y * scale))
+                        val distance = (tapOffset - screenPos).getDistance()
+                        distance <= 28f * scale
+                    }
+                    if (tappedNode != null) {
+                        onNodeClick(tappedNode.room_slug ?: tappedNode.slug)
+                    }
+                }
+            }
             .pointerInput(Unit) {
                 detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(0.5f, 3.0f)
+                    scale = (scale * zoom).coerceIn(0.4f, 3.5f)
                     offset += pan
                 }
             }
@@ -248,37 +317,103 @@ fun TopologyCanvasView(
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
-
-            // Center origin with offset
             val cx = (w / 2) + offset.x
             val cy = (h / 2) + offset.y
 
-            // Sample topology graph nodes & edges rendering
-            val rRoot = Offset(cx, cy - 120 * scale)
-            val rAp1 = Offset(cx - 140 * scale, cy + 20 * scale)
-            val rAp2 = Offset(cx + 140 * scale, cy + 20 * scale)
-            val rSonos = Offset(cx, cy + 120 * scale)
+            if (nodes.isEmpty()) {
+                return@Canvas
+            }
 
-            // Edges
-            drawLine(Color(0xFF4CAF50), rRoot, rAp1, strokeWidth = 3f * scale)
-            drawLine(Color(0xFF4CAF50), rRoot, rAp2, strokeWidth = 3f * scale)
-            drawLine(Color(0xFF2196F3), rRoot, rSonos, strokeWidth = 3f * scale)
+            // 1. Draw directed edges
+            edges.forEach { edge ->
+                val sBase = nodeBaseCoords[edge.source_slug]
+                    ?: nodeBaseCoords[edge.source]
+                    ?: nodeBaseCoords[edge.source_id]
+                val tBase = nodeBaseCoords[edge.target_slug]
+                    ?: nodeBaseCoords[edge.target]
+                    ?: nodeBaseCoords[edge.target_id]
 
-            // Blocked link (dashed)
-            val dashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
-            drawLine(
-                Color(0xFFFF9800),
-                rAp1,
-                rSonos,
-                strokeWidth = 2f * scale,
-                pathEffect = dashEffect
-            )
+                if (sBase != null && tBase != null) {
+                    val sScreen = Offset(cx + (sBase.x * scale), cy + (sBase.y * scale))
+                    val tScreen = Offset(cx + (tBase.x * scale), cy + (tBase.y * scale))
 
-            // Nodes
-            drawCircle(Color(0xFF4CAF50), radius = 18f * scale, center = rRoot)
-            drawCircle(Color(0xFF2196F3), radius = 14f * scale, center = rAp1)
-            drawCircle(Color(0xFF2196F3), radius = 14f * scale, center = rAp2)
-            drawCircle(Color(0xFF9C27B0), radius = 14f * scale, center = rSonos)
+                    val edgeColor = when {
+                        edge.layer == "WIRED_LAN" -> Color(0xFF4CAF50)
+                        edge.layer == "WIFI_INFRA" -> Color(0xFF2196F3)
+                        !edge.is_forwarding || edge.stp_state == "BLOCKING" || edge.line_style == "dashed" -> Color(0xFFFF9800)
+                        edge.stp_state == "HT_BOND" -> Color(0xFF00BCD4)
+                        else -> Color(0xFF9C27B0)
+                    }
+
+                    val isDashed = !edge.is_forwarding || edge.line_style == "dashed" || edge.stp_state == "BLOCKING"
+                    val pathEffect = if (isDashed) {
+                        PathEffect.dashPathEffect(floatArrayOf(10f * scale, 10f * scale), 0f)
+                    } else {
+                        null
+                    }
+
+                    drawLine(
+                        color = edgeColor,
+                        start = sScreen,
+                        end = tScreen,
+                        strokeWidth = (if (edge.is_forwarding) 2.5f else 1.8f) * scale,
+                        pathEffect = pathEffect
+                    )
+                }
+            }
+
+            // 2. Draw nodes
+            nodes.forEach { node ->
+                val base = nodeBaseCoords[node.slug] ?: Offset.Zero
+                val screenPos = Offset(cx + (base.x * scale), cy + (base.y * scale))
+                val radius = (if (node.is_stp_root) 18f else 13f) * scale
+
+                val nodeColor = when {
+                    node.is_stp_root -> Color(0xFFFFD700)
+                    node.device_role == "ROUTER" -> Color(0xFFE91E63)
+                    node.device_role == "SWITCH" -> Color(0xFF607D8B)
+                    node.device_role == "WIFI_AP" -> Color(0xFF2196F3)
+                    node.health_grade == "EXCELLENT" || node.health_grade == "GOOD" -> Color(0xFF4CAF50)
+                    node.health_grade == "MARGINAL" -> Color(0xFFFF9800)
+                    else -> Color(0xFFF44336)
+                }
+
+                // Inner circle
+                drawCircle(
+                    color = nodeColor,
+                    radius = radius,
+                    center = screenPos
+                )
+
+                // STP Root Bridge halo
+                if (node.is_stp_root) {
+                    drawCircle(
+                        color = Color(0xFFFFD700),
+                        radius = radius + 6f * scale,
+                        center = screenPos,
+                        style = Stroke(width = 2.5f * scale)
+                    )
+                }
+
+                // Ghost Group halo
+                if (node.is_ghost_group) {
+                    drawCircle(
+                        color = Color(0xFFF44336),
+                        radius = radius + 6f * scale,
+                        center = screenPos,
+                        style = Stroke(width = 2.5f * scale)
+                    )
+                }
+
+                // Node label text
+                textPaint.textSize = (9f * scale * density).coerceIn(16f, 36f)
+                drawContext.canvas.nativeCanvas.drawText(
+                    node.name,
+                    screenPos.x,
+                    screenPos.y + (radius + 12f * scale),
+                    textPaint
+                )
+            }
         }
 
         Column(
@@ -287,15 +422,20 @@ fun TopologyCanvasView(
                 .padding(12.dp)
         ) {
             Text(
-                text = "Vector Topology Graph ($nodesCount nodes, $edgesCount edges)",
+                text = "Vector Topology Graph (${nodes.size} nodes, ${edges.size} edges)",
                 color = Color.White,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Pinch to zoom, drag to pan. Solid = Active, Dashed = STP Blocked",
-                color = Color.Gray,
+                text = "Green: Wired LAN  |  Blue: Wi-Fi  |  Purple: SonosNet  |  Dashed: STP Blocked",
+                color = Color.LightGray,
                 fontSize = 11.sp
+            )
+            Text(
+                text = "Pinch to zoom, drag to pan. Tap node to inspect 3-pillar diagnostics.",
+                color = Color.Gray,
+                fontSize = 10.sp
             )
         }
     }

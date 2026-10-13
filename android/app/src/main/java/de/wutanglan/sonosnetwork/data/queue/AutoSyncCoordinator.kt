@@ -57,6 +57,7 @@ class AutoSyncCoordinator(
                 label = survey.label,
                 trigger_mode = survey.trigger_mode,
                 captured_at = survey.timestamp,
+                client_survey_id = survey.client_survey_id,
                 connected_bssid = survey.connected_bssid,
                 connected_ssid = survey.connected_ssid,
                 link_speed_mbps = survey.link_speed_mbps,

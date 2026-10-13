@@ -17,10 +17,11 @@ class SqliteSurveyQueueManager(
 
     companion object {
         const val DATABASE_NAME = "sonos_survey_cache.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
         const val TABLE_PENDING_SURVEYS = "pending_surveys"
 
         const val COL_ID = "id"
+        const val COL_CLIENT_SURVEY_ID = "client_survey_id"
         const val COL_ROOM_SLUG = "room_slug"
         const val COL_TIMESTAMP = "timestamp"
         const val COL_LABEL = "label"
@@ -44,6 +45,7 @@ class SqliteSurveyQueueManager(
             """
             CREATE TABLE IF NOT EXISTS $TABLE_PENDING_SURVEYS (
                 $COL_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                $COL_CLIENT_SURVEY_ID TEXT NOT NULL,
                 $COL_ROOM_SLUG TEXT NOT NULL,
                 $COL_TIMESTAMP TEXT NOT NULL,
                 $COL_LABEL TEXT NOT NULL,
@@ -85,6 +87,7 @@ class SqliteSurveyQueueManager(
     override suspend fun enqueueSurvey(survey: PendingSurveyEntity): Long = withContext(Dispatchers.IO) {
         val db = writableDatabase
         val values = ContentValues().apply {
+            put(COL_CLIENT_SURVEY_ID, survey.client_survey_id)
             put(COL_ROOM_SLUG, survey.room_slug)
             put(COL_TIMESTAMP, survey.timestamp)
             put(COL_LABEL, survey.label)
@@ -115,6 +118,7 @@ class SqliteSurveyQueueManager(
         )
         while (cursor.moveToNext()) {
             val id = cursor.getLong(cursor.getColumnIndexOrThrow(COL_ID))
+            val clientSurveyId = cursor.getString(cursor.getColumnIndexOrThrow(COL_CLIENT_SURVEY_ID))
             val roomSlug = cursor.getString(cursor.getColumnIndexOrThrow(COL_ROOM_SLUG))
             val timestamp = cursor.getString(cursor.getColumnIndexOrThrow(COL_TIMESTAMP))
             val label = cursor.getString(cursor.getColumnIndexOrThrow(COL_LABEL))
@@ -131,6 +135,7 @@ class SqliteSurveyQueueManager(
             list.add(
                 PendingSurveyEntity(
                     id = id,
+                    client_survey_id = clientSurveyId,
                     room_slug = roomSlug,
                     timestamp = timestamp,
                     label = label,

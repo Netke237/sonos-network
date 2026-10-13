@@ -18,6 +18,7 @@ data class RoomSurveyInputDto(
     val label: String? = null,
     val trigger_mode: String = "MANUAL_SURVEY",
     val captured_at: String? = null,
+    val client_survey_id: String? = null,
     val connected_bssid: String? = null,
     val connected_ssid: String? = null,
     val link_speed_mbps: Int? = null,
@@ -482,9 +483,10 @@ data class LiveRfSampleDto(
 
 @Serializable
 data class LiveRfFrameDto(
-    val room_slug: String,
-    val interval_sec: Double,
-    val consumer_id: String,
-    val captured_at: String,
+    val room_slug: String = "",
+    val interval_sec: Double = 2.0,
+    val consumer_id: String = "",
+    val timestamp: String? = null,
+    val captured_at: String = timestamp ?: "",
     val samples: List<LiveRfSampleDto> = emptyList()
 )

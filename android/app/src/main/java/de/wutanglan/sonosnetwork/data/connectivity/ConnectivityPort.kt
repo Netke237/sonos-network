@@ -25,7 +25,7 @@ data class ConnectionState(
 ) {
     companion object {
         const val DEFAULT_LOCAL_LAN_URL = "http://192.168.55.60:8001"
-        const val DEFAULT_FIREWALLA_VPN_URL = "http://minipc:8001"
+        const val DEFAULT_FIREWALLA_VPN_URL = "http://192.168.55.60:8001"
     }
 }
 

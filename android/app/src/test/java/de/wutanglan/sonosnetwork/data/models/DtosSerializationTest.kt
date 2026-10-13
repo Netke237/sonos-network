@@ -98,4 +98,45 @@ class DtosSerializationTest {
         assertTrue(report.is_stp_root_healthy)
         assertEquals(11, report.sonosnet_wireless_player_count)
     }
+
+    @Test
+    fun testLiveRfFrameDtoDeserializationFromBackendPayload() {
+        val jsonStr = """
+            {
+                "timestamp": "2026-10-13T06:30:00Z",
+                "consumer_id": "ws-12345678",
+                "room_slug": "nicolas",
+                "samples": [
+                    {
+                        "rincon_uuid": "RINCON_001",
+                        "zone_name": "Nicolas",
+                        "phy_error_rate": 0.0,
+                        "captured_at": "2026-10-13T06:30:00Z"
+                    }
+                ]
+            }
+        """.trimIndent()
+
+        val frame: LiveRfFrameDto = json.decodeFromString(jsonStr)
+        assertEquals("nicolas", frame.room_slug)
+        assertEquals("ws-12345678", frame.consumer_id)
+        assertEquals("2026-10-13T06:30:00Z", frame.captured_at)
+        assertEquals(2.0, frame.interval_sec, 0.001)
+        assertEquals(1, frame.samples.size)
+        assertEquals("RINCON_001", frame.samples.first().rincon_uuid)
+    }
+
+    @Test
+    fun testRoomSurveyInputDtoPreservesClientSurveyId() {
+        val payload = RoomSurveyInputDto(
+            client_survey_id = "test-uuid-123",
+            label = "Test Survey",
+            trigger_mode = "MANUAL_SURVEY"
+        )
+        val jsonStr = json.encodeToString(payload)
+        assertTrue(jsonStr.contains("\"client_survey_id\":\"test-uuid-123\""))
+
+        val decoded: RoomSurveyInputDto = json.decodeFromString(jsonStr)
+        assertEquals("test-uuid-123", decoded.client_survey_id)
+    }
 }

@@ -2,6 +2,7 @@ package de.wutanglan.sonosnetwork.data.queue
 
 data class PendingSurveyEntity(
     val id: Long = 0,
+    val client_survey_id: String = java.util.UUID.randomUUID().toString(),
     val room_slug: String,
     val timestamp: String,
     val label: String,
@@ -13,3 +14,4 @@ data class PendingSurveyEntity(
     val readings_json: String,
     val sync_status: String = "PENDING"
 )
+

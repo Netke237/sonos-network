@@ -33,6 +33,7 @@ class SqliteSurveyQueueManagerTest {
         assertEquals(0, queueManager.getPendingCount().first())
 
         val survey = PendingSurveyEntity(
+            client_survey_id = "test-client-survey-uuid-1",
             room_slug = "nicolas",
             timestamp = "2026-10-13T06:20:00Z",
             label = "Attic Walkthrough",
@@ -51,6 +52,7 @@ class SqliteSurveyQueueManagerTest {
         val pending = queueManager.getPendingSurveys()
         assertEquals(1, pending.size)
         val item = pending.first()
+        assertEquals("test-client-survey-uuid-1", item.client_survey_id)
         assertEquals("nicolas", item.room_slug)
         assertEquals("2026-10-13T06:20:00Z", item.timestamp)
         assertEquals("Attic Walkthrough", item.label)

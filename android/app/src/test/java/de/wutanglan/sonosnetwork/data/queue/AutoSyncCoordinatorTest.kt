@@ -17,6 +17,7 @@ class AutoSyncCoordinatorTest {
 
         fakeQueue.enqueueSurvey(
             PendingSurveyEntity(
+                client_survey_id = "survey-uuid-1",
                 room_slug = "nicolas",
                 timestamp = "2026-10-13T06:00:00Z",
                 label = "Survey 1",
@@ -52,6 +53,7 @@ class AutoSyncCoordinatorTest {
         assertEquals(2, fakeClient.submittedSurveys.size)
         val firstSub = fakeClient.submittedSurveys[0]
         assertEquals("nicolas", firstSub.first)
+        assertEquals("survey-uuid-1", firstSub.second.client_survey_id)
         assertEquals("Survey 1", firstSub.second.label)
         assertEquals("2026-10-13T06:00:00Z", firstSub.second.captured_at)
         assertEquals("STORE_AND_FORWARD", firstSub.second.trigger_mode)
