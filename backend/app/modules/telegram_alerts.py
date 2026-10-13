@@ -10,25 +10,31 @@ from app.modules.watchdog_engine import WatchdogAlert
 logger = logging.getLogger("sonos_network.telegram_alerts")
 
 
+def _escape_md(text: str) -> str:
+    """Escapes underscores to prevent Telegram entity parsing errors on zone names / RINCON UUIDs."""
+    return text.replace("_", "\\_")
+
+
 def format_telegram_alert_card(alert: WatchdogAlert) -> str:
+    escaped_title = _escape_md(alert.title)
     if alert.cleared:
-        header = f"✅ *[RESOLVED] {alert.title}*"
+        header = f"✅ *[RESOLVED] {escaped_title}*"
     elif alert.auto_healed:
-        header = f"⚡ *[AUTO-HEALED] {alert.title}*"
+        header = f"⚡ *[AUTO-HEALED] {escaped_title}*"
     elif alert.severity == "CRITICAL":
-        header = f"🚨 *[CRITICAL] {alert.title}*"
+        header = f"🚨 *[CRITICAL] {escaped_title}*"
     elif alert.severity == "MARGINAL":
-        header = f"⚠️ *[WARNING] {alert.title}*"
+        header = f"⚠️ *[WARNING] {escaped_title}*"
     else:
-        header = f"ℹ️ *[INFO] {alert.title}*"
+        header = f"ℹ️ *[INFO] {escaped_title}*"
 
     lines = [
         header,
         "",
-        f"📍 *Entity:* {alert.entity_id}",
+        f"📍 *Entity:* {_escape_md(alert.entity_id)}",
         f"⏱ *Time:* {alert.detected_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
-        f"📝 *Detail:* {alert.description}",
-        f"🛠 *Action:* {alert.action_required}",
+        f"📝 *Detail:* {_escape_md(alert.description)}",
+        f"🛠 *Action:* {_escape_md(alert.action_required)}",
     ]
     return "\n".join(lines)
 
@@ -82,6 +88,19 @@ class TelegramAlertAdapter:
             if resp.status_code == 200 and resp.json().get("ok") is True:
                 logger.info("Telegram notification card delivered successfully.")
                 return True
+            elif resp.status_code == 400 and "can't parse entities" in resp.text:
+                # Fallback: Retry as plain text without parse_mode if formatting broke
+                logger.warning("Telegram parse_mode failed, retrying plain text payload...")
+                plain_payload = {"chat_id": self.chat_id, "text": text}
+                if self._http_client is not None:
+                    resp_retry = await self._http_client.post(url, json=plain_payload, timeout=10.0)
+                else:
+                    async with httpx.AsyncClient() as client:
+                        resp_retry = await client.post(url, json=plain_payload, timeout=10.0)
+                if resp_retry.status_code == 200 and resp_retry.json().get("ok") is True:
+                    logger.info("Telegram plain text fallback delivered successfully.")
+                    return True
+                return False
             else:
                 logger.warning(
                     "Telegram API responded with error status %d: %s",

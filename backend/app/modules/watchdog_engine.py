@@ -27,10 +27,18 @@ class WatchdogAlert(BaseModel):
     title: str
     description: str
     action_required: str
+    remediation_guide: str | None = None
     entity_id: str
     detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     auto_healed: bool = False
     cleared: bool = False
+    resolved_at: datetime | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.remediation_guide is None:
+            self.remediation_guide = self.action_required
+        if self.cleared and self.resolved_at is None:
+            self.resolved_at = datetime.now(timezone.utc)
 
 
 class IncidentState(BaseModel):
@@ -92,7 +100,11 @@ class WatchdogEngine:
         self._auto_heal_enabled = enabled
 
     def get_active_incidents(self) -> list[IncidentState]:
-        return [inc for inc in self._incidents.values() if inc.is_active]
+        return [
+            inc
+            for inc in self._incidents.values()
+            if inc.is_active and not inc.auto_healed
+        ]
 
     def clear_incident(self, incident_key: str) -> None:
         if incident_key in self._incidents:
@@ -134,11 +146,13 @@ class WatchdogEngine:
         current_time = now or datetime.now(timezone.utc)
         current_detected: dict[str, dict] = {}
 
-        # 1. Evaluate Ghost Groups
+        # 1. Evaluate Ghost Groups (P3-CF-08: deduplicated union of header zones and player flags)
         if snapshot.has_ghost_groups or any(p.is_ghost_group for p in snapshot.players):
-            zones = list(snapshot.ghost_group_zones)
-            if not zones:
-                zones = [p.zone_name or p.room_name or p.rincon_uuid for p in snapshot.players if p.is_ghost_group]
+            zones_set = set(snapshot.ghost_group_zones)
+            for p in snapshot.players:
+                if p.is_ghost_group:
+                    zones_set.add(p.zone_name or p.room_name or p.rincon_uuid)
+            zones = sorted(zones_set)
             for zone in zones:
                 key = f"{WatchdogAnomalyType.GHOST_GROUP.value}:{zone}"
                 current_detected[key] = {
@@ -150,7 +164,7 @@ class WatchdogEngine:
                     "action_required": "Trigger UPnP BecomeCoordinatorOfStandaloneGroup across affected zones.",
                 }
 
-        # 2. Evaluate STP Root Usurpation
+        # 2. Evaluate STP Root Usurpation (P3-CF-02: always scan players for rogue root MAC)
         root_mac_prefix = "9000.542a1b63fe6e"
         designated_root = snapshot.designated_stp_root.strip()
         is_usurped = False
@@ -158,12 +172,12 @@ class WatchdogEngine:
 
         if snapshot.is_root_healthy is False or not designated_root.lower().startswith(root_mac_prefix):
             is_usurped = True
-        else:
-            for p in snapshot.players:
-                if p.designated_root and not p.designated_root.strip().lower().startswith(root_mac_prefix):
-                    is_usurped = True
-                    observed_root = p.designated_root.strip()
-                    break
+
+        for p in snapshot.players:
+            if p.designated_root and not p.designated_root.strip().lower().startswith(root_mac_prefix):
+                is_usurped = True
+                observed_root = p.designated_root.strip()
+                break
 
         if is_usurped:
             # Consolidate household into single incident key (P3-F-05)
@@ -177,7 +191,7 @@ class WatchdogEngine:
                 "action_required": "Unplug Ethernet from rogue node (Keller) or disable Wi-Fi/SonosNet on secondary wired leaf; preserve Wohnzimmer_Bookshelf as sole root bridge.",
             }
 
-        # 3. Evaluate EMI Burst (Null-safe Atheros evaluation, P3-F-03)
+        # 3. Evaluate EMI Burst (P3-CF-01: Null-safe Atheros formatting)
         for p in snapshot.players:
             has_emi = (p.ofdm_ani_level is not None and p.ofdm_ani_level >= 7) or (
                 p.phy_error_rate is not None and p.phy_error_rate > 100.0
@@ -188,12 +202,14 @@ class WatchdogEngine:
                 severity = "CRITICAL" if (p.phy_error_rate is not None and p.phy_error_rate > 100.0) or (
                     p.ofdm_ani_level is not None and p.ofdm_ani_level >= 8
                 ) else "MARGINAL"
+                ani_str = f"OFDM ANI {p.ofdm_ani_level}" if p.ofdm_ani_level is not None else "OFDM ANI N/A"
+                phy_str = f"{p.phy_error_rate:.1f} PHY err/s" if p.phy_error_rate is not None else "N/A PHY err/s"
                 current_detected[key] = {
                     "anomaly_type": WatchdogAnomalyType.EMI_BURST,
                     "entity_id": speaker,
                     "severity": severity,
                     "title": f"Severe 2.4 GHz EMI Burst on {speaker}",
-                    "description": f"Player '{speaker}' recorded OFDM ANI {p.ofdm_ani_level} and {p.phy_error_rate:.1f} PHY err/s, risking DPC volume ducking and packet drops.",
+                    "description": f"Player '{speaker}' recorded {ani_str} and {phy_str}, risking DPC volume ducking and packet drops.",
                     "action_required": "Inspect local USB-C docks / power supplies near speaker; relocate speaker 1-2m laterally.",
                 }
 
@@ -309,6 +325,7 @@ class AutoHealCoordinator:
         now: datetime | None = None,
     ) -> list[WatchdogAlert]:
         alerts = self.watchdog_engine.evaluate_snapshot(snapshot, now=now)
+        flush_res = None
         for alert in alerts:
             if (
                 alert.anomaly_type == WatchdogAnomalyType.GHOST_GROUP
@@ -316,11 +333,12 @@ class AutoHealCoordinator:
                 and self.watchdog_engine.is_auto_heal_enabled()
             ):
                 try:
-                    logger.info("Executing autonomous UPnP Ghost Group flush for zone %s...", alert.entity_id)
-                    flush_res = await self.sonos_adapter.flush_ghost_groups()
-                    if repo is not None:
-                        # Atomic PostgreSQL synchronization (P3-F-02)
-                        await repo.apply_ghost_flush(flush_res)
+                    if flush_res is None:
+                        logger.info("Executing autonomous UPnP Ghost Group flush...")
+                        flush_res = await self.sonos_adapter.flush_ghost_groups()
+                        if repo is not None:
+                            # Atomic PostgreSQL synchronization (P3-F-02)
+                            await repo.apply_ghost_flush(flush_res)
                     self.watchdog_engine.record_auto_heal(alert.incident_key)
                     alert.auto_healed = True
                 except Exception as err:

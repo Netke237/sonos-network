@@ -24,7 +24,7 @@ def test_format_telegram_alert_card():
     card = format_telegram_alert_card(alert)
     assert "🚨 *[CRITICAL] STP Root Bridge Usurped: 9000.5caafd595eea*" in card
     assert "📍 *Entity:* household" in card
-    assert "📝 *Detail:* Observed STP Designated Root usurped Wohnzimmer_Bookshelf." in card
+    assert "📝 *Detail:* Observed STP Designated Root usurped Wohnzimmer\\_Bookshelf." in card
     assert "🛠 *Action:* Unplug Ethernet from Keller Play:3." in card
 
 

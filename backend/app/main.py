@@ -652,7 +652,13 @@ def create_app(
     # --- Mini PC Companion Distribution & QR Code Endpoints ---
     @app.get("/api/companion/qr")
     async def get_companion_qr(request: Request, url: str | None = None) -> Response:
-        target_url = url or f"{str(request.base_url).rstrip('/')}/api/companion/apk"
+        if not url:
+            base_str = str(request.base_url).rstrip("/")
+            if request.base_url.hostname in ("127.0.0.1", "localhost", None):
+                base_str = os.getenv("MINI_PC_HOST", "http://192.168.55.60:8001").rstrip("/")
+            target_url = f"{base_str}/api/companion/apk"
+        else:
+            target_url = url
         factory = qrcode.image.svg.SvgImage
         img = qrcode.make(target_url, image_factory=factory)
         svg_stream = io.BytesIO()
@@ -662,8 +668,12 @@ def create_app(
     @app.get("/api/companion/apk")
     async def download_companion_apk() -> Response:
         apk_candidates = [
-            Path("android/app/build/outputs/apk/debug/app-debug.apk"),
+            Path("backend/app/static/apk/sonos-network-companion.apk"),
+            Path("app/static/apk/sonos-network-companion.apk"),
+            Path("backend/app/static/apk/app-release.apk"),
+            Path("app/static/apk/app-release.apk"),
             Path("android/app/build/outputs/apk/release/app-release.apk"),
+            Path("android/app/build/outputs/apk/debug/app-debug.apk"),
             Path("dist/sonos-network-companion.apk"),
         ]
         for candidate in apk_candidates:
@@ -685,6 +695,8 @@ def create_app(
     @app.get("/install", response_class=HTMLResponse)
     async def install_companion_page(request: Request) -> str:
         base_url = str(request.base_url).rstrip("/")
+        if request.base_url.hostname in ("127.0.0.1", "localhost", None):
+            base_url = os.getenv("MINI_PC_HOST", "http://192.168.55.60:8001").rstrip("/")
         apk_url = f"{base_url}/api/companion/apk"
         qr_url = f"{base_url}/api/companion/qr"
 

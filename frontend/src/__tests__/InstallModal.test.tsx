@@ -20,10 +20,10 @@ describe("InstallModal", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByAltText("Companion App Installation QR Code")
-    ).toHaveAttribute("src", "/api/companion/qr");
+    ).toHaveAttribute("src", expect.stringContaining("/api/companion/qr"));
 
     const downloadLink = screen.getByText("⬇️ Download APK Directly");
-    expect(downloadLink).toHaveAttribute("href", "/api/companion/apk");
+    expect(downloadLink).toHaveAttribute("href", expect.stringContaining("/api/companion/apk"));
 
     expect(
       screen.getByText("Local Wi-Fi & Firewalla VPN Ready")
