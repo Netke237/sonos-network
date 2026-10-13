@@ -46,21 +46,36 @@ The Android application is organized into 4 deep modules, each exposing a minima
       suspend fun runSingleShotProbe(): Result<RawScanProbeResult>
       fun isHardwareScanningSupported(): Boolean
       fun hasRequiredPermissions(): Boolean
+      fun getThrottleCooldownSeconds(): Int
   }
   ```
 - **Responsibilities & Mechanisms**:
   - Direct hardware binding to Android `WifiManager.startScan()` and `BroadcastReceiver(SCAN_RESULTS_AVAILABLE_ACTION)`.
-  - **Single-Shot 2-Sample Probe**: Triggers a back-to-back 2-sample probe spaced 1.5s apart, averaging RSSI values to suppress momentary Rayleigh multipath fading spikes.
-  - Abides strictly by Android 10+ 4-scan/2-minute throttling without requiring developer mode tweaks.
+  - **Single-Shot Fresh Probe**: Executes 1 fresh active scan probe per room survey tap. Strictly verifies `intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false) == true` and validates `ScanResult.timestamp >= probeStartTimeMicros` so cached stale scan results from previously visited rooms are never read or persisted.
+  - **Android 10+ Throttle Guard**: Abides strictly by the 4-scans-per-2-minutes foreground quota. If throttled, `WifiManager.startScan()` failure is detected immediately and surfaces a non-blocking countdown dialog/banner (*"Android Wi-Fi scan rate-limit reached — retry in X seconds"*) rather than silently storing stale data.
+  - **Required Runtime Permissions**:
+    - `ACCESS_FINE_LOCATION`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE`.
+    - Android 13+ (API level 33+): `android.permission.NEARBY_WIFI_DEVICES` (with `android:usesPermissionFlags="neverForLocation"` in `AndroidManifest.xml`) checked at runtime.
   - **802.11 Frequency & Channel Mapping**:
     - **2.4 GHz**: $2412 - 2472\text{ MHz} \implies \text{Ch } (f - 2407) / 5$ (Channels 1–13, 20 MHz); $2484\text{ MHz} \implies \text{Ch } 14$.
     - **5 GHz UNII-1**: $5180 - 5240\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (e.g. $5220\text{ MHz} \implies \text{Ch } 44$, $5200\text{ MHz} \implies \text{Ch } 40$).
     - **5 GHz UNII-2A DFS**: $5260 - 5320\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (Channels 52–64).
     - **5 GHz UNII-2C DFS**: $5500 - 5720\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (Channels 100–144).
     - **5 GHz UNII-3**: $5745 - 5825\text{ MHz} \implies \text{Ch } (f - 5000) / 5$ (Channels 149–165).
-    - **Channel Width & Center Channel**:
+    - **Channel Width & Band-Dependent Center Channel**:
       - Primary control channel: mapped from `ScanResult.frequency`.
-      - Center frequency: mapped from `ScanResult.centerFreq0` (if $> 0$ converted to center channel, else falling back to primary `channel`).
+      - Band-dependent center channel:
+        ```kotlin
+        val centerChannel = if (scanResult.centerFreq0 > 0) {
+            if (scanResult.centerFreq0 < 3000) {
+                (scanResult.centerFreq0 - 2407) / 5
+            } else {
+                (scanResult.centerFreq0 - 5000) / 5
+            }
+        } else {
+            primaryChannel
+        }
+        ```
       - Channel width: mapped from `ScanResult.channelWidth` (`CHANNEL_WIDTH_20MHZ` $\to 20$, `CHANNEL_WIDTH_40MHZ` $\to 40$, `CHANNEL_WIDTH_80MHZ` $\to 80$, `CHANNEL_WIDTH_160MHZ` $\to 160$).
   - **BSSID Normalization & Client Classification**:
     - `OWN_MANAGED_AP`: Matches lower 5 octets `:4C:BC:76:7C:40/41` (`Galerie AP`) or `:4C:BC:76:94:C0/C1` (`Kitchen AP`).
@@ -71,6 +86,21 @@ The Android application is organized into 4 deep modules, each exposing a minima
 ### Module 2: `SurveyQueueModule` (`SurveyQueuePort`)
 - **Seam Protocol Interface**:
   ```kotlin
+  @Entity(tableName = "pending_surveys")
+  data class PendingSurveyEntity(
+      @PrimaryKey(autoGenerate = true) val id: Long = 0,
+      val room_slug: String,
+      val timestamp: String, // ISO 8601 captured_at
+      val label: String,
+      val trigger_mode: String = "STORE_AND_FORWARD",
+      val connected_bssid: String? = null,
+      val connected_ssid: String? = null,
+      val link_speed_mbps: Int? = null,
+      val frequency_mhz: Int? = null,
+      val readings_json: String, // Serialized List<BssidReadingInputDto>
+      val sync_status: String = "PENDING"
+  )
+
   interface SurveyQueuePort {
       suspend fun enqueueSurvey(survey: PendingSurveyEntity): Long
       suspend fun getPendingSurveys(): List<PendingSurveyEntity>
@@ -81,22 +111,48 @@ The Android application is organized into 4 deep modules, each exposing a minima
   ```
 - **Responsibilities & Mechanisms**:
   - Implemented via **Android Room SQLite** (`sonos_survey_cache.db`).
-  - Persists `PendingSurveyEntity` records containing `room_slug`, `timestamp` (ISO 8601), `label`, `connected_bssid`, `link_speed_mbps`, and serialized JSON `readings`.
+  - Persists `PendingSurveyEntity` records containing all survey properties: `room_slug`, `timestamp` (ISO 8601), `label`, `trigger_mode = "STORE_AND_FORWARD"`, `connected_bssid`, `connected_ssid`, `link_speed_mbps`, `frequency_mhz`, and `readings_json`.
   - Supports offline walkthroughs: when a room survey is captured without network connectivity, it is immediately enqueued locally with state `PENDING`.
-  - An auto-sync coordinator observes network reachability: once the Mini PC API is reachable, it drains the queue sequentially via `POST /api/rooms/{slug}/surveys` sending `captured_at = timestamp`, guaranteeing zero loss of survey timestamps or ordering.
+  - An auto-sync coordinator observes network reachability: once the Mini PC API is reachable, it drains the queue sequentially via `POST /api/rooms/{slug}/surveys` sending `captured_at = timestamp`, `connected_ssid`, and `frequency_mhz`, guaranteeing zero loss of survey timestamps, attributes, or ordering.
 
 ### Module 3: `NetworkClientModule` (`SonosNetworkClientPort` & `ConnectivityPort`)
-- **Seam Protocol Interface**:
+- **Seam Protocol Interface & Explicit DTO Contracts**:
   ```kotlin
+  @Serializable
+  data class BssidReadingInputDto(
+      val bssid: String,
+      val ssid: String? = null,
+      val band: String, // "2.4GHz" or "5GHz" (matches normalize_band)
+      val channel: Int,
+      val center_channel: Int? = null,
+      val width_mhz: Int = 20,
+      val rssi_dbm: Int
+  )
+
+  @Serializable
+  data class RoomSurveyInputDto(
+      val label: String? = null,
+      val trigger_mode: String = "MANUAL_SURVEY",
+      val captured_at: String? = null, // ISO 8601 timestamp for store-and-forward
+      val connected_bssid: String? = null,
+      val connected_ssid: String? = null,
+      val link_speed_mbps: Int? = null,
+      val frequency_mhz: Int? = null,
+      val notes: String? = null,
+      val readings: List<BssidReadingInputDto>? = null
+  )
+
   interface SonosNetworkClientPort {
-      suspend fun getOverview(): Result<HouseOverviewDto>
-      suspend fun getTopology(layer: String?): Result<TopologyGraphDto>
-      suspend fun getRoomSurveys(roomSlug: String): Result<List<WiFiRoomSurveyDto>>
-      suspend fun submitRoomSurvey(roomSlug: String, payload: RoomSurveyInputDto): Result<WiFiRoomSurveyDto>
-      suspend fun flushGhostGroups(zoneIps: List<String>? = null): Result<GhostFlushResultDto>
-      suspend fun pollNow(): Result<HouseholdSonosSnapshotDto>
-      suspend fun pingSweep(): Result<PingSweepResultDto>
-      fun streamLiveRf(roomSlug: String): Flow<LiveRfFrameDto>
+      suspend fun getOverview(): Result<HouseOverviewDto> // GET /api/overview
+      suspend fun getTopology(layer: String?): Result<TopologyGraphDto> // GET /api/topology
+      suspend fun getHouseDiagnostics(): Result<HouseDiagnosticReportDto> // GET /api/diagnostics
+      suspend fun getRoomDiagnostics(roomSlug: String): Result<RoomDiagnosticSummaryDto> // GET /api/rooms/{slug}/diagnostics
+      suspend fun getRoomSurveys(roomSlug: String): Result<List<WiFiRoomSurveyDto>> // GET /api/rooms/{slug}/surveys
+      suspend fun submitRoomSurvey(roomSlug: String, payload: RoomSurveyInputDto): Result<WiFiRoomSurveyDto> // POST /api/rooms/{slug}/surveys
+      suspend fun flushGhostGroups(zoneIps: List<String>? = null): Result<GhostFlushResultDto> // POST /api/actions/flush-ghost-groups
+      suspend fun pollNow(): Result<HouseholdSonosSnapshotDto> // POST /api/actions/poll-now
+      suspend fun pingSweep(): Result<PingSweepResultDto> // POST /api/actions/ping-sweep
+      fun streamLiveRf(roomSlug: String): Flow<LiveRfFrameDto> // WS /api/ws/live-rf
   }
 
   interface ConnectivityPort {
@@ -125,28 +181,28 @@ The Android application is organized into 4 deep modules, each exposing a minima
   - `BottomNavigationBar` with 3 primary tabs:
     1. **📍 Survey Walkthrough**:
        - Floor selector (`Keller`, `Erdgeschoss`, `Obergeschoss`, `Dachgeschoss`) and Room chip selector.
-       - Prominent **"Scan Room Now"** button (shows progress spinner during 1.5s 2-sample probe; disabled if Remote VPN is active or permissions missing).
+       - Prominent **"Scan Room Now"** button (shows progress spinner during fresh active scan; disabled if Remote VPN is active, permissions missing, or throttled with visible cooldown timer).
        - Live scan preview card (strongest 5 GHz / 2.4 GHz AP, link speed, heard BSSID list grouped by classification).
        - Offline queue pill (e.g., *"2 surveys queued (offline)"*) with manual **"Sync Now"** button.
     2. **🏠 House Health**:
        - Overall House Health Grade banner (`EXCELLENT`, `GOOD`, `MARGINAL`, `CRITICAL`).
        - Dual-View toggle:
-         - **Floor Accordion Cards**: Touch-friendly collapsible cards displaying each room's Wi-Fi RSSI, Sonos ANI / PHY err/s, and switch port status. Tapping a room opens the **Room 3-Pillar Diagnostic Sheet**.
+         - **Floor Accordion Cards**: Touch-friendly collapsible cards displaying each room's Wi-Fi RSSI, Sonos ANI / PHY err/s, and switch port status. Tapping a room opens the **Room 3-Pillar Diagnostic Sheet** (showing server-computed diagnostics and solution proposals from `getRoomDiagnostics`).
          - **Pinch-to-Zoom Pan Canvas**: Vector-rendered topological graph showing device cards and active/blocked STP links with interactive zoom and pan.
     3. **⚡ Quick Actions & Tools**:
        - **1-Click Ghost Group Reset**: Instant call to `POST /api/actions/flush-ghost-groups` with response dialog.
        - **Poll Sonos Now**: Instant call to `POST /api/actions/poll-now`.
        - **ICMP Ping Sweep**: Instant call to `POST /api/actions/ping-sweep`.
-       - **Live RF Velocity Oscilloscope**: Real-time rolling waveform of PHY error rate and ANI desensitization.
+       - **Live RF Velocity Oscilloscope**: Real-time rolling waveform of PHY error rate and ANI desensitization (`LiveRfFrameDto`).
 
 ---
 
 ## 4. User Stories & Acceptance Criteria
 
 1. **US-1: Single-Tap Room Walkthrough Scan**:
-   - As Kenneth walking into `Nicolas` (attic), I select `Dachgeschoss` > `Nicolas` and tap "Scan Room". The app runs a 2-sample probe over 1.5 seconds, averages RSSIs, classifies BSSIDs (`Galerie AP` on Ch 44, neighbor networks), and submits to `POST /api/rooms/nicolas/surveys`.
+   - As Kenneth walking into `Nicolas` (attic), I select `Dachgeschoss` > `Nicolas` and tap "Scan Room". The app triggers a fresh active scan probe, verifies `EXTRA_RESULTS_UPDATED == true` and fresh timestamps, classifies BSSIDs (`Galerie AP` on Ch 44, neighbor networks), and submits to `POST /api/rooms/nicolas/surveys`.
 2. **US-2: Offline Dead-Zone Store-and-Forward**:
-   - As Kenneth walking into `Keller` where Wi-Fi drops completely, I tap "Scan Room". The app records the survey into Room SQLite, displays *"1 survey queued (offline)"*, and automatically posts it to the Mini PC once Wi-Fi reconnects on `Erdgeschoss`.
+   - As Kenneth walking into `Keller` where Wi-Fi drops completely, I tap "Scan Room". The app records the survey into Room SQLite (`PendingSurveyEntity` with `trigger_mode = "STORE_AND_FORWARD"`, `connected_ssid`, `frequency_mhz`), displays *"1 survey queued (offline)"*, and automatically posts it to the Mini PC once Wi-Fi reconnects on `Erdgeschoss`.
 3. **US-3: Firewalla VPN Safe Mode**:
    - As Kenneth traveling outside the home connected via Firewalla WireGuard VPN (`minipc:8001`), the app displays a prominent **"Remote VPN Active"** badge. Physical Wi-Fi scanning is safely disabled, while House Health, Room Diagnostics, and 1-click UPnP actions remain operational.
 4. **US-4: 1-Click Ghost Group Flush from Phone**:
@@ -160,17 +216,18 @@ The Android application is organized into 4 deep modules, each exposing a minima
 
 The Phase 2 implementation must strictly enforce the following invariants:
 1. **[G1] Telemetry & RF Data Integrity**:
-   - 802.11 channel and frequency calculations must be exact ($2412\text{ MHz} \implies \text{Ch } 1$, $5220\text{ MHz} \implies \text{Ch } 44$).
+   - 802.11 channel and frequency calculations must be exact ($2412\text{ MHz} \implies \text{Ch } 1$, $2484\text{ MHz} \implies \text{Ch } 14$, $5220\text{ MHz} \implies \text{Ch } 44$, $5745\text{ MHz} \implies \text{Ch } 149$).
+   - Center channel mapping must use band-dependent logic so 2.4 GHz 40 MHz networks never produce negative channel numbers.
    - BSSID classifications must match the server's exact rules (EAP650 lower 5 octets, SonosNet BaseMAC+1, rogue radios).
    - RSSI values must never be inverted or corrupted during SQLite serialization.
 2. **[G2] Invariant Compliance & Scan Throttling**:
-   - Must strictly adhere to Android 10+ 4-scan/2-minute throttling via single-shot 2-sample probes (never continuous unthrottled background loops).
+   - Must strictly adhere to Android 10+ 4-scan/2-minute throttling via single-shot fresh probes. If throttled, surfaces a cooldown timer without reading stale cache.
    - Must pause physical Wi-Fi scanning when connected over remote VPN.
    - STP root invariant (`Wohnzimmer_Bookshelf` Cost 0) and basement leaf invariant must never be misstated in UI copy.
 3. **[G3] Architectural Boundary Discipline**:
-   - The Android app is a companion client: all diagnostic rule evaluation (`DiagnosticEngine`) and historical analytics remain strictly server-side on FastAPI. The app displays server-computed grades and proposals faithfully without duplicating business logic.
+   - The Android app is a companion client: all diagnostic rule evaluation (`DiagnosticEngine`) and historical analytics remain strictly server-side on FastAPI (`GET /api/diagnostics`, `GET /api/rooms/{slug}/diagnostics`). The app displays server-computed grades and proposals faithfully without duplicating business logic.
 4. **[G4] Error Handling & Zero Data Loss**:
-   - Network failure during room scan must never discard user scan data; payloads must safely fall back to the Room SQLite queue.
+   - Network failure during room scan must never discard user scan data; payloads must safely fall back to the Room SQLite queue preserving `timestamp` (`captured_at`), `connected_ssid`, `frequency_mhz`, and `trigger_mode = "STORE_AND_FORWARD"`.
    - Reconnection sync must be idempotent and preserve survey timestamps.
 
 ---
@@ -178,12 +235,12 @@ The Phase 2 implementation must strictly enforce the following invariants:
 ## 6. Testing Strategy
 
 1. **Unit & Seam Tests (Robolectric / JUnit 5)**:
-   - `WifiScannerServiceTest`: Tests 802.11 band, frequency, channel calculation, and 2-sample averaging against recorded `ScanResult` fixtures.
+   - `WifiScannerServiceTest`: Tests single-shot active probe, verifying `EXTRA_RESULTS_UPDATED` check, timestamp freshness check, throttle detection, and band-dependent center channel mapping.
    - `BssidClassifierTest`: Tests BSSID normalization and classification against EAP650 virtual SSIDs, SonosNet BSSIDs, rogue transmitters, and neighbor networks.
-   - `SurveyQueueRepositoryTest`: Tests offline SQLite enqueueing, ordering, pending count flow, and sync marking.
+   - `SurveyQueueRepositoryTest`: Tests offline SQLite enqueueing, ordering, pending count flow, attribute preservation (`connected_ssid`, `frequency_mhz`, `trigger_mode = "STORE_AND_FORWARD"`), and sync marking.
    - `ConnectivityMonitorTest`: Tests network capability detection, VPN transport detection, and dual-endpoint switching.
-   - `SonosNetworkClientTest`: Tests REST serialization/deserialization and error handling against mock HTTP server responses.
+   - `SonosNetworkClientTest`: Tests REST serialization/deserialization for `getHouseDiagnostics`, `getRoomDiagnostics`, `submitRoomSurvey` (with `RoomSurveyInputDto` and `BssidReadingInputDto`), `pollNow`, `flushGhostGroups`, and WebSocket `streamLiveRf` (`LiveRfFrameDto`).
 2. **Compose UI Tests**:
-   - `SurveyWalkthroughScreenTest`: Verifies room selection, scan button state, progress indicators, and offline queue banner.
-   - `HouseHealthScreenTest`: Verifies dual-view accordion vs. canvas toggle, room health badges, and diagnostic sheet display.
+   - `SurveyWalkthroughScreenTest`: Verifies room selection, scan button state, progress indicators, cooldown countdown, and offline queue banner.
+   - `HouseHealthScreenTest`: Verifies dual-view accordion vs. canvas toggle, room health badges, and diagnostic sheet display from `getRoomDiagnostics`.
    - `QuickActionsScreenTest`: Verifies 1-click action buttons and response dialogs.

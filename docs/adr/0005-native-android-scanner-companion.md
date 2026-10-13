@@ -18,9 +18,9 @@ Phase 1 established the centralized Always-On Mini PC platform (`FastAPI + Postg
    - Direct hardware integration with Android's `WifiManager.startScan()` and `ScanResult` APIs without bridge overhead or cross-platform limitations.
 2. **Hybrid Companion Role**:
    - Acts as both a **Field Walkthrough Scanner** (walk room to room, single-tap capture 802.11 BSSID readings, automatically classify APs) and a **Pocket Health Console** (view house health, inspect 3-pillar room diagnostics, execute 1-click UPnP actions).
-3. **Single-Shot 2-Sample Room Probes**:
-   - Each room survey tap triggers a back-to-back 2-sample probe over 1.5 seconds, averaging RSSI values and eliminating transient fading spikes.
-   - Operates strictly within Android 10+ scan throttling limits (4 scans per 2 minutes per foreground app) without requiring developer mode throttling toggles.
+3. **Single-Shot Fresh Room Probes & Throttle Guard**:
+   - Each room survey tap triggers 1 fresh active scan probe via `WifiManager.startScan()`, verifying `EXTRA_RESULTS_UPDATED == true` and checking timestamp freshness so stale cached results from previous rooms are never recorded.
+   - Operates strictly within Android 10+ scan throttling limits (4 scans per 2 minutes per foreground app) across multi-room walkthroughs. If throttled, presents a visible countdown timer rather than silently saving stale data.
 4. **Offline Store-and-Forward (Android Room SQLite)**:
    - Room surveys captured while disconnected (e.g. basement leaf walk) are persisted locally in an Android Room SQLite database queue.
    - An automatic background synchronization worker checks API connectivity and forwards queued surveys to `POST /api/rooms/{slug}/surveys` upon reconnection.
@@ -41,5 +41,5 @@ Phase 1 established the centralized Always-On Mini PC platform (`FastAPI + Postg
   - Offline store-and-forward guarantees zero survey data loss in dead-zones.
   - Kenneth has instant 1-click Sonos diagnostic control and house health monitoring from his Android phone anywhere in the house or remotely over VPN.
 - **Trade-offs / Limitations**:
-  - Requires Android runtime permissions (`ACCESS_FINE_LOCATION`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE`) mandated by Android OS for Wi-Fi scanning.
+  - Requires Android runtime permissions (`ACCESS_FINE_LOCATION`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE`, plus `android.permission.NEARBY_WIFI_DEVICES` on Android 13+) mandated by Android OS for Wi-Fi scanning.
   - Physical room Wi-Fi scanning is restricted to local on-premise Wi-Fi connectivity.

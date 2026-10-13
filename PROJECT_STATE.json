@@ -103,11 +103,21 @@
       "status": "in_progress",
       "branch": "board/phase-2-android-app-70ec5581",
       "issue": 23,
-      "plan_audit_rounds": 0,
+      "plan_audit_rounds": 1,
       "plan_audit_clean": false,
       "code_audit_rounds": 0,
       "audit_clean": false,
-      "rounds": []
+      "rounds": [
+        {
+          "stage": "plan",
+          "round": 1,
+          "reviewer": "2f47a262-0f24-4416-b3d8-9b0a961f5ec8 (Independent Plan Gate Auditor)",
+          "findings_count": 6,
+          "findings": ["P2-F-01", "P2-F-02", "P2-F-03", "P2-F-04", "P2-F-05", "P2-F-06"],
+          "fixes": "Resolved P2-F-01 (1 fresh active scan probe per room survey tap, EXTRA_RESULTS_UPDATED == true & timestamp freshness check, visible rate-limit countdown dialog without reading stale cache), P2-F-02 (band-dependent centerFreq0 mapping to prevent negative channels on 2.4 GHz 40 MHz networks), P2-F-03 (added getHouseDiagnostics and getRoomDiagnostics to SonosNetworkClientPort), P2-F-04 (added connected_ssid, frequency_mhz, and trigger_mode = 'STORE_AND_FORWARD' to PendingSurveyEntity and backend schema), P2-F-05 (explicit Kotlin DTO contracts BssidReadingInputDto and RoomSurveyInputDto matching backend Pydantic schemas), and P2-F-06 (added android.permission.NEARBY_WIFI_DEVICES for Android 13+).",
+          "outstanding": []
+        }
+      ]
     }
   ],
   "task_backlog": {
