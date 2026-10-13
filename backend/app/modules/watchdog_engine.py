@@ -207,7 +207,7 @@ class WatchdogEngine:
                     p.ofdm_ani_level is not None and p.ofdm_ani_level >= 8
                 ) else "MARGINAL"
                 ani_str = f"OFDM ANI {p.ofdm_ani_level}" if p.ofdm_ani_level is not None else "OFDM ANI N/A"
-                phy_str = f"{p.phy_error_rate:.1f} PHY err/s" if p.phy_error_rate is not None else "PHY err/s N/A"
+                phy_str = f"{p.phy_error_rate:.1f} PHY err/s" if p.phy_error_rate is not None else "N/A PHY err/s"
                 current_detected[key] = {
                     "anomaly_type": WatchdogAnomalyType.EMI_BURST,
                     "entity_id": speaker,

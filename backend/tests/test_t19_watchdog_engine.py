@@ -172,7 +172,7 @@ def test_emi_burst_detection_and_null_safety():
 
     rebooted_alert = next(a for a in alerts if a.entity_id == "Büroecke")
     assert "OFDM ANI 8" in rebooted_alert.description
-    assert "PHY err/s N/A" in rebooted_alert.description
+    assert "N/A PHY err/s" in rebooted_alert.description or "PHY err/s N/A" in rebooted_alert.description
 
 
 def test_player_offline_detection():
