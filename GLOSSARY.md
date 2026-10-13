@@ -73,3 +73,13 @@ This glossary is the single source of truth for domain terms across the backend,
 - **`SingleShotProbe`**: A foreground single-shot active 802.11 probe triggered on user tap, strictly verifying `EXTRA_RESULTS_UPDATED == true` and `ScanResult.timestamp >= probeStartTimeMicros` freshness while asynchronously awaiting the OS `SCAN_RESULTS_AVAILABLE_ACTION` broadcast (with a 10s coroutine timeout) to respect Android 10+ scan throttling (4 scans per 2 minutes per foreground app) and surfacing a visible cooldown timer if throttled rather than reading stale cache. For stationary single-room audits, an optional 2-sample precision probe is supported with asymmetric RSSI averaging across detected samples.
 - **`DualViewTopology`**: Touch-optimized mobile representation providing a 1-tap toggle between **Floor Accordion Cards** (collapsible cards tailored for vertical one-handed mobile use) and **Pinch-to-Zoom Pan Canvas** (vector canvas rendering device nodes and active/blocked STP links).
 
+---
+
+## 6. Autonomous Watchdog & Alerting Domain
+
+- **`WatchdogEngine`**: An autonomous 24/7 background inspection engine on the Mini PC that evaluates real-time household telemetry snapshots for critical anomalies: Ghost Group desynchronization, STP Root Bridge usurpation, localized non-Wi-Fi EMI bursts (>100 PHY err/s), and player reachability transitions.
+- **`AutoHealAction`**: An autonomous self-healing intervention executed without human input—specifically triggering UPnP `BecomeCoordinatorOfStandaloneGroup` across affected zones within 5 seconds of detecting a Ghost Group to prevent Spotify and cloud streaming playback lockups.
+- **`TelegramAlertChannel`**: An outbound alerting pipeline delivering structured Markdown notification cards directly to Kenneth's Telegram chat via the Telegram Bot API (`sendMessage`), featuring incident debouncing (15-minute suppression window) and concrete remediation instructions for physical network faults.
+- **`CompanionApkServer`**: A lightweight distribution service on the Mini PC (`GET /install` and `GET /api/companion/apk`) providing a mobile-friendly QR code web page for 1-tap phone camera scanning and instantaneous APK downloads across local Wi-Fi or Firewalla WireGuard VPN.
+
+

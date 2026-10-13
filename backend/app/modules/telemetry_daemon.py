@@ -27,6 +27,7 @@ class ScheduledTelemetryCollector:
         session_factory: async_sessionmaker[AsyncSession],
         sonos_adapter: SonosTelemetryPort,
         wifi_adapter: WiFiTelemetryPort,
+        auto_heal_coordinator: Any | None = None,
         interval_sec: float = 60.0,
         retention_days: int = 7,
         consumer_id: str = "background-60s",
@@ -34,6 +35,7 @@ class ScheduledTelemetryCollector:
         self._session_factory = session_factory
         self._sonos_adapter = sonos_adapter
         self._wifi_adapter = wifi_adapter
+        self._auto_heal_coordinator = auto_heal_coordinator
         self.interval_sec = interval_sec
         self.retention_days = retention_days
         self.consumer_id = consumer_id
@@ -53,14 +55,20 @@ class ScheduledTelemetryCollector:
             wifi_snapshot = await self._wifi_adapter.collect_wifi_infrastructure()
 
             pruned_count = 0
+            watchdog_alerts_count = 0
             async with self._session_factory() as session:
                 repo = SqlAlchemyTopologyRepository(session)
-                await repo.save_sonos_snapshot(sonos_snapshot)
+                saved_snapshot = await repo.save_sonos_snapshot(sonos_snapshot)
                 await repo.sync_wifi_infrastructure(wifi_snapshot)
                 pruned_count = await repo.prune_expired_telemetry(
                     retention_days=self.retention_days,
                     consumer_id=self.consumer_id,
                 )
+                if self._auto_heal_coordinator is not None:
+                    alerts = await self._auto_heal_coordinator.handle_snapshot(
+                        saved_snapshot, repo=repo
+                    )
+                    watchdog_alerts_count = len(alerts)
 
             self._last_cycle_at = executed_at
             self._total_cycles += 1
@@ -71,6 +79,7 @@ class ScheduledTelemetryCollector:
                 "batch_id": sonos_snapshot.batch_id,
                 "total_players": len(sonos_snapshot.players),
                 "pruned_count": pruned_count,
+                "watchdog_alerts_count": watchdog_alerts_count,
                 "executed_at": executed_at,
             }
         except Exception as exc:

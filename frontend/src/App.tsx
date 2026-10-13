@@ -21,6 +21,7 @@ import { TopologyGraphView } from "./components/TopologyGraphView";
 import { AniCleanlinessMeter } from "./components/AniCleanlinessMeter";
 import { LiveWaveformOscilloscope } from "./components/LiveWaveformOscilloscope";
 import { PlainLanguageAdvisorModal } from "./components/PlainLanguageAdvisorModal";
+import { InstallModal } from "./components/InstallModal";
 import type {
   BssidClassification,
   ConnectionMode,
@@ -71,6 +72,7 @@ export default function App() {
   const [actionBanner, setActionBanner] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
+  const [installModalOpen, setInstallModalOpen] = useState<boolean>(false);
 
   // T6 Survey Delta State
   const [deltaOpen, setDeltaOpen] = useState<boolean>(false);
@@ -721,6 +723,24 @@ export default function App() {
             }}
           >
             Manage Inventory / Add Room / Device
+          </button>
+          <button
+            type="button"
+            onClick={() => setInstallModalOpen(true)}
+            style={{
+              backgroundColor: "#7c3aed",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 14px",
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            📱 Install Android App
           </button>
         </div>
       </header>
@@ -3278,6 +3298,12 @@ export default function App() {
         room={advisorRoom}
         onClose={() => setAdvisorRoom(null)}
         onActionComplete={(msg) => setActionBanner(msg)}
+      />
+
+      {/* Companion App Install Modal */}
+      <InstallModal
+        isOpen={installModalOpen}
+        onClose={() => setInstallModalOpen(false)}
       />
     </div>
   );

@@ -1,7 +1,7 @@
 {
   "project": "sonos-network",
   "repo": "Netke237/sonos-network",
-  "active_phase": null,
+  "active_phase": "PHASE-3-WATCHDOG-TELEGRAM",
   "audit_rule": {
     "max_rounds_per_stage": 3,
     "gate_criteria": [
@@ -151,6 +151,65 @@
           "findings_count": 0,
           "findings": [],
           "fixes": "Verified all Round 1 fixes clean. All 45 Android unit tests, 35 backend tests, and 21 frontend tests pass. Code Gate Audit passed cleanly with 0 findings.",
+          "outstanding": []
+        }
+      ]
+    },
+    {
+      "id": "PHASE-3-WATCHDOG-TELEGRAM",
+      "title": "Autonomous 24/7 Watchdog, Telegram Self-Healing & Companion Distribution",
+      "status": "in_progress",
+      "branch": "board/phase-3-watchdog-telegram-b79e2c41",
+      "issue": 30,
+      "plan_audit_rounds": 2,
+      "plan_audit_clean": true,
+      "code_audit_rounds": 3,
+      "audit_clean": true,
+      "status": "completed",
+      "rounds": [
+        {
+          "stage": "plan",
+          "round": 1,
+          "reviewer": "249ae7fc-a034-4b70-8317-5bc78b3b77de (Independent Plan Gate Auditor)",
+          "findings_count": 6,
+          "findings": ["P3-F-01", "P3-F-02", "P3-F-03", "P3-F-04", "P3-F-05", "P3-F-06"],
+          "fixes": "Escalated threshold (>3 critical findings) to Kenneth and resolved all 6 findings in docs/specs/phase-3-watchdog-telegram-distribution-spec.md and docs/adr/0006-...md: P3-F-01 (is_root_healthy or startsWith guard for designated STP root), P3-F-02 (atomic repo.apply_ghost_flush call on auto-heal), P3-F-03 (explicit null guards for Beam/Ethernet ofdm_ani_level and phy_error_rate), P3-F-04 (standardized canonical WatchdogAnomalyType enum), P3-F-05 (household-scoped debouncer for STP_ROOT_USURPED to prevent alert flooding), and P3-F-06 (suppression of duplicate secondary RESOLVED cards for auto-healed incidents).",
+          "outstanding": []
+        },
+        {
+          "stage": "plan",
+          "round": 2,
+          "reviewer": "cdab1244-44f2-4864-8c1e-800f56728a6e (Independent Plan Gate Auditor)",
+          "findings_count": 0,
+          "findings": [],
+          "fixes": "Verified all Round 1 fixes P3-F-01 through P3-F-06 clean across spec, ADR-0006, GLOSSARY.md, and backend codebase. Plan Gate Audit passed cleanly with 0 findings.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 1,
+          "reviewer": "d39a4e8f-541e-4fed-8cde-dc7bf57d10e4 (Independent Code Gate Auditor)",
+          "findings_count": 10,
+          "findings": ["P3-CF-01", "P3-CF-02", "P3-CF-03", "P3-CF-04", "P3-CF-05", "P3-CF-06", "P3-CF-07", "P3-CF-08", "P3-CF-09", "P3-CF-10"],
+          "fixes": "Resolved all 10 findings: null-safe format strings, rogue MAC scan for STP root usurpation, underscore markdown escaping and plain-text fallback for Telegram, static APK download candidates, API_BASE in InstallModal, single UPnP flush per cycle, localhost QR code fallback to MINI_PC_HOST, deduplicated ghost zones union, auto-healed incident exclusion from active faults, and remediation_guide/resolved_at field additions in WatchdogAlert.",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 2,
+          "reviewer": "218c0bcc-4bb3-42fb-bf29-24a51c0858ce (Independent Code Gate Auditor)",
+          "findings_count": 6,
+          "findings": ["P3-R2-01", "P3-R2-02", "P3-R2-03", "P3-R2-04", "P3-R2-05", "P3-R2-06"],
+          "fixes": "Resolved all 6 findings: gated STP_ROOT_USURPED alert to only fire when observed root deviates from root_mac_prefix (P3-R2-01), auto-healed persistent fault reset and immediate [PERSISTENT] re-alerting (P3-R2-02), verified UPnP flush results before marking alerts auto_healed (P3-R2-03), removed unconditional ghost group clearing for unsanitized players in apply_ghost_flush (P3-R2-04), set resolved_at to detected_at timestamp (P3-R2-05), and added chmod +x gradlew step in Android release workflow plus git executable bit (P3-R2-06).",
+          "outstanding": []
+        },
+        {
+          "stage": "code",
+          "round": 3,
+          "reviewer": "fd7117d7-3ebe-4522-b841-086783cdd649 (Independent Code Gate Auditor)",
+          "findings_count": 0,
+          "findings": [],
+          "fixes": "Verified all Round 2 fixes clean across watchdog_engine.py, topology_repository.py, main.py, android-release.yml, and test suites. All 61 backend pytest tests and 23 frontend vitest tests pass. Zero blocking findings.",
           "outstanding": []
         }
       ]

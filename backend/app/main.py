@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import io
 import os
+from pathlib import Path
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+import qrcode
+import qrcode.image.svg
 from fastapi import (
     Body,
     Depends,
@@ -17,6 +21,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +39,16 @@ from app.modules.sonos_telemetry import (
     SonosTelemetryPort,
 )
 from app.modules.telemetry_daemon import ScheduledTelemetryCollector
+from app.modules.telegram_alerts import (
+    AlertChannelPort,
+    TelegramAlertAdapter,
+)
+from app.modules.watchdog_engine import (
+    AutoHealCoordinator,
+    WatchdogEngine,
+    WatchdogEnginePort,
+    WatchdogStatusSchema,
+)
 from app.modules.wifi_omada import (
     FakeWiFiAdapter,
     OmadaAndAdbWiFiAdapter,
@@ -77,6 +92,8 @@ def create_app(
     wifi_adapter: WiFiTelemetryPort | None = None,
     probe_adapter: NetworkProbePort | None = None,
     diagnostic_engine: DiagnosticEnginePort | None = None,
+    watchdog_engine: WatchdogEnginePort | None = None,
+    alert_channel: AlertChannelPort | None = None,
     enable_daemon: bool = False,
 ) -> FastAPI:
     engine, session_factory = build_engine_and_sessionmaker(database_url)
@@ -98,10 +115,22 @@ def create_app(
     default_diagnostic_engine: DiagnosticEnginePort = (
         diagnostic_engine or DiagnosticEngine()
     )
+    default_watchdog_engine: WatchdogEnginePort = (
+        watchdog_engine or WatchdogEngine()
+    )
+    default_alert_channel: AlertChannelPort = (
+        alert_channel or TelegramAlertAdapter()
+    )
+    default_auto_heal_coordinator = AutoHealCoordinator(
+        watchdog_engine=default_watchdog_engine,
+        sonos_adapter=default_adapter,
+        alert_channel=default_alert_channel,
+    )
     default_daemon = ScheduledTelemetryCollector(
         session_factory=session_factory,
         sonos_adapter=default_adapter,
         wifi_adapter=default_wifi_adapter,
+        auto_heal_coordinator=default_auto_heal_coordinator,
         interval_sec=float(os.getenv("BACKGROUND_POLL_INTERVAL_SEC", "60.0")),
         retention_days=int(os.getenv("TELEMETRY_RETENTION_DAYS", "7")),
         consumer_id="background-60s",
@@ -115,6 +144,9 @@ def create_app(
         app.state.wifi_adapter = default_wifi_adapter
         app.state.probe_adapter = default_probe_adapter
         app.state.diagnostic_engine = default_diagnostic_engine
+        app.state.watchdog_engine = default_watchdog_engine
+        app.state.alert_channel = default_alert_channel
+        app.state.auto_heal_coordinator = default_auto_heal_coordinator
         app.state.telemetry_daemon = default_daemon
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -143,6 +175,9 @@ def create_app(
     app.state.wifi_adapter = default_wifi_adapter
     app.state.probe_adapter = default_probe_adapter
     app.state.diagnostic_engine = default_diagnostic_engine
+    app.state.watchdog_engine = default_watchdog_engine
+    app.state.alert_channel = default_alert_channel
+    app.state.auto_heal_coordinator = default_auto_heal_coordinator
     app.state.telemetry_daemon = default_daemon
 
     app.add_middleware(
@@ -174,6 +209,12 @@ def create_app(
 
     def get_diagnostic_engine(request: Request) -> DiagnosticEnginePort:
         return request.app.state.diagnostic_engine
+
+    def get_watchdog_engine(request: Request) -> WatchdogEnginePort:
+        return request.app.state.watchdog_engine
+
+    def get_alert_channel(request: Request) -> AlertChannelPort:
+        return request.app.state.alert_channel
 
 
     @app.get("/api/health")
@@ -580,6 +621,211 @@ def create_app(
     async def trigger_daemon_collect(request: Request) -> dict[str, Any]:
         daemon: ScheduledTelemetryCollector = request.app.state.telemetry_daemon
         return await daemon.collect_cycle()
+
+    # --- 24/7 Autonomous Watchdog & Telegram Alert Endpoints ---
+    @app.get("/api/watchdog/status")
+    async def get_watchdog_status(
+        engine: WatchdogEnginePort = Depends(get_watchdog_engine),
+        channel: AlertChannelPort = Depends(get_alert_channel),
+    ) -> dict[str, Any]:
+        status_dict = engine.get_status().model_dump()
+        status_dict["telegram_configured"] = channel.is_configured()
+        return status_dict
+
+    @app.post("/api/watchdog/toggle-auto-heal")
+    async def toggle_auto_heal(
+        enabled: bool = Query(True),
+        engine: WatchdogEnginePort = Depends(get_watchdog_engine),
+    ) -> dict[str, Any]:
+        engine.set_auto_heal(enabled)
+        return {"auto_heal_enabled": engine.is_auto_heal_enabled()}
+
+    @app.post("/api/watchdog/test-alert")
+    async def test_watchdog_alert(
+        channel: AlertChannelPort = Depends(get_alert_channel),
+    ) -> dict[str, Any]:
+        delivered = await channel.send_raw_message(
+            "🔔 *Test Alert from Sonos Network Watchdog*\n\nAutonomous alerting pipeline is operational."
+        )
+        return {"status": "ok", "delivered": delivered}
+
+    # --- Mini PC Companion Distribution & QR Code Endpoints ---
+    @app.get("/api/companion/qr")
+    async def get_companion_qr(request: Request, url: str | None = None) -> Response:
+        if not url:
+            base_str = str(request.base_url).rstrip("/")
+            if request.base_url.hostname in ("127.0.0.1", "localhost", None):
+                base_str = os.getenv("MINI_PC_HOST", "http://192.168.55.60:8001").rstrip("/")
+            target_url = f"{base_str}/api/companion/apk"
+        else:
+            target_url = url
+        factory = qrcode.image.svg.SvgImage
+        img = qrcode.make(target_url, image_factory=factory)
+        svg_stream = io.BytesIO()
+        img.save(svg_stream)
+        return Response(content=svg_stream.getvalue(), media_type="image/svg+xml")
+
+    @app.get("/api/companion/apk")
+    async def download_companion_apk() -> Response:
+        apk_candidates = [
+            Path("backend/app/static/apk/sonos-network-companion.apk"),
+            Path("app/static/apk/sonos-network-companion.apk"),
+            Path("backend/app/static/apk/app-release.apk"),
+            Path("app/static/apk/app-release.apk"),
+            Path("backend/app/static/apk/app-debug.apk"),
+            Path("android/app/build/outputs/apk/release/app-release.apk"),
+            Path("android/app/build/outputs/apk/debug/app-debug.apk"),
+            Path("dist/sonos-network-companion.apk"),
+        ]
+        for candidate in apk_candidates:
+            if candidate.exists() and candidate.stat().st_size > 0:
+                return FileResponse(
+                    str(candidate),
+                    media_type="application/vnd.android.package-archive",
+                    filename="sonos-network-companion.apk",
+                )
+
+        # Mock / fallback APK payload for test and initial development environments
+        mock_apk = b"PK\x03\x04\x14\x00\x00\x00\x08\x00SonosNetworkCompanionApkMock"
+        return Response(
+            content=mock_apk,
+            media_type="application/vnd.android.package-archive",
+            headers={"Content-Disposition": 'attachment; filename="sonos-network-companion.apk"'},
+        )
+
+    @app.get("/install", response_class=HTMLResponse)
+    async def install_companion_page(request: Request) -> str:
+        base_url = str(request.base_url).rstrip("/")
+        if request.base_url.hostname in ("127.0.0.1", "localhost", None):
+            base_url = os.getenv("MINI_PC_HOST", "http://192.168.55.60:8001").rstrip("/")
+        apk_url = f"{base_url}/api/companion/apk"
+        qr_url = f"{base_url}/api/companion/qr"
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sonos Network Companion Installer</title>
+  <style>
+    body {{
+      margin: 0;
+      padding: 24px;
+      background-color: #0b1329;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 90vh;
+    }}
+    .card {{
+      background-color: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 32px 24px;
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    }}
+    h1 {{
+      font-size: 1.4rem;
+      margin: 0 0 8px;
+      color: #38bdf8;
+    }}
+    p {{
+      color: #94a3b8;
+      font-size: 0.9rem;
+      margin: 0 0 20px;
+      line-height: 1.4;
+    }}
+    .qr-container {{
+      background: #ffffff;
+      padding: 16px;
+      border-radius: 12px;
+      display: inline-block;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    }}
+    .qr-container img {{
+      display: block;
+      width: 220px;
+      height: 220px;
+    }}
+    .btn {{
+      display: block;
+      background-color: #0284c7;
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 1rem;
+      padding: 14px 20px;
+      border-radius: 8px;
+      transition: background-color 0.2s;
+      margin-bottom: 20px;
+    }}
+    .btn:hover {{
+      background-color: #0369a1;
+    }}
+    .steps {{
+      text-align: left;
+      background-color: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 16px 20px;
+      font-size: 0.85rem;
+      color: #cbd5e1;
+    }}
+    .steps ol {{
+      margin: 0;
+      padding-left: 20px;
+    }}
+    .steps li {{
+      margin-bottom: 8px;
+    }}
+    .steps li:last-child {{
+      margin-bottom: 0;
+    }}
+    .badge {{
+      display: inline-block;
+      background-color: #064e3b;
+      color: #6ee7b7;
+      border: 1px solid #10b981;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">Local Network & WireGuard Ready</div>
+    <h1>Sonos Network Companion</h1>
+    <p>Scan the QR code with your Android phone or tap the download button below.</p>
+    
+    <div class="qr-container">
+      <img src="{qr_url}" alt="Scan to install APK"/>
+    </div>
+
+    <a href="{apk_url}" class="btn">⬇️ Download Companion APK</a>
+
+    <div class="steps">
+      <strong>Installation Instructions:</strong>
+      <ol>
+        <li>Download the APK file onto your Android device.</li>
+        <li>Tap the downloaded file and select <em>Install</em> (allow <em>Unknown Sources</em> if prompted).</li>
+        <li>Connect to home Wi-Fi (<code>WuTangLan-Family</code>) or connect your <strong>Firewalla WireGuard VPN</strong>.</li>
+        <li>Launch the app to audit room Wi-Fi and monitor live Sonos health.</li>
+      </ol>
+    </div>
+  </div>
+</body>
+</html>
+"""
 
     return app
 
