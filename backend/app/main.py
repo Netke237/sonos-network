@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import io
 import os
+from pathlib import Path
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+import qrcode
+import qrcode.image.svg
 from fastapi import (
     Body,
     Depends,
@@ -17,6 +21,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -643,6 +648,171 @@ def create_app(
             "🔔 *Test Alert from Sonos Network Watchdog*\n\nAutonomous alerting pipeline is operational."
         )
         return {"status": "ok", "delivered": delivered}
+
+    # --- Mini PC Companion Distribution & QR Code Endpoints ---
+    @app.get("/api/companion/qr")
+    async def get_companion_qr(request: Request, url: str | None = None) -> Response:
+        target_url = url or f"{str(request.base_url).rstrip('/')}/api/companion/apk"
+        factory = qrcode.image.svg.SvgImage
+        img = qrcode.make(target_url, image_factory=factory)
+        svg_stream = io.BytesIO()
+        img.save(svg_stream)
+        return Response(content=svg_stream.getvalue(), media_type="image/svg+xml")
+
+    @app.get("/api/companion/apk")
+    async def download_companion_apk() -> Response:
+        apk_candidates = [
+            Path("android/app/build/outputs/apk/debug/app-debug.apk"),
+            Path("android/app/build/outputs/apk/release/app-release.apk"),
+            Path("dist/sonos-network-companion.apk"),
+        ]
+        for candidate in apk_candidates:
+            if candidate.exists() and candidate.stat().st_size > 0:
+                return FileResponse(
+                    str(candidate),
+                    media_type="application/vnd.android.package-archive",
+                    filename="sonos-network-companion.apk",
+                )
+
+        # Mock / fallback APK payload for test and initial development environments
+        mock_apk = b"PK\x03\x04\x14\x00\x00\x00\x08\x00SonosNetworkCompanionApkMock"
+        return Response(
+            content=mock_apk,
+            media_type="application/vnd.android.package-archive",
+            headers={"Content-Disposition": 'attachment; filename="sonos-network-companion.apk"'},
+        )
+
+    @app.get("/install", response_class=HTMLResponse)
+    async def install_companion_page(request: Request) -> str:
+        base_url = str(request.base_url).rstrip("/")
+        apk_url = f"{base_url}/api/companion/apk"
+        qr_url = f"{base_url}/api/companion/qr"
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sonos Network Companion Installer</title>
+  <style>
+    body {{
+      margin: 0;
+      padding: 24px;
+      background-color: #0b1329;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 90vh;
+    }}
+    .card {{
+      background-color: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 32px 24px;
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    }}
+    h1 {{
+      font-size: 1.4rem;
+      margin: 0 0 8px;
+      color: #38bdf8;
+    }}
+    p {{
+      color: #94a3b8;
+      font-size: 0.9rem;
+      margin: 0 0 20px;
+      line-height: 1.4;
+    }}
+    .qr-container {{
+      background: #ffffff;
+      padding: 16px;
+      border-radius: 12px;
+      display: inline-block;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    }}
+    .qr-container img {{
+      display: block;
+      width: 220px;
+      height: 220px;
+    }}
+    .btn {{
+      display: block;
+      background-color: #0284c7;
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 1rem;
+      padding: 14px 20px;
+      border-radius: 8px;
+      transition: background-color 0.2s;
+      margin-bottom: 20px;
+    }}
+    .btn:hover {{
+      background-color: #0369a1;
+    }}
+    .steps {{
+      text-align: left;
+      background-color: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 16px 20px;
+      font-size: 0.85rem;
+      color: #cbd5e1;
+    }}
+    .steps ol {{
+      margin: 0;
+      padding-left: 20px;
+    }}
+    .steps li {{
+      margin-bottom: 8px;
+    }}
+    .steps li:last-child {{
+      margin-bottom: 0;
+    }}
+    .badge {{
+      display: inline-block;
+      background-color: #064e3b;
+      color: #6ee7b7;
+      border: 1px solid #10b981;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">Local Network & WireGuard Ready</div>
+    <h1>Sonos Network Companion</h1>
+    <p>Scan the QR code with your Android phone or tap the download button below.</p>
+    
+    <div class="qr-container">
+      <img src="{qr_url}" alt="Scan to install APK"/>
+    </div>
+
+    <a href="{apk_url}" class="btn">⬇️ Download Companion APK</a>
+
+    <div class="steps">
+      <strong>Installation Instructions:</strong>
+      <ol>
+        <li>Download the APK file onto your Android device.</li>
+        <li>Tap the downloaded file and select <em>Install</em> (allow <em>Unknown Sources</em> if prompted).</li>
+        <li>Connect to home Wi-Fi (<code>WuTangLan-Family</code>) or connect your <strong>Firewalla WireGuard VPN</strong>.</li>
+        <li>Launch the app to audit room Wi-Fi and monitor live Sonos health.</li>
+      </ol>
+    </div>
+  </div>
+</body>
+</html>
+"""
 
     return app
 
