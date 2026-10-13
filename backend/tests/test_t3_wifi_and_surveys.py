@@ -267,6 +267,70 @@ async def test_wifi_infrastructure_and_room_surveys_api_and_post_ingestion(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_room_survey_idempotency_and_dead_zone_empty_readings():
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            fixed_ts = "2026-10-13T04:00:00Z"
+            client_id = "test-uuid-offline-walkthrough-1234"
+            survey_payload = {
+                "label": "Attic Offline Walkthrough",
+                "trigger_mode": "MANUAL_SURVEY",
+                "captured_at": fixed_ts,
+                "client_survey_id": client_id,
+                "readings": [
+                    {
+                        "bssid": "76:4C:BC:76:7C:41",
+                        "ssid": "WuTangLan-Family",
+                        "band": "5GHz",
+                        "channel": 44,
+                        "center_channel": 42,
+                        "width_mhz": 80,
+                        "rssi_dbm": -68,
+                    }
+                ],
+            }
+
+            # 1. First submission creates the survey with original captured_at
+            resp1 = await client.post("/api/rooms/nicolas/surveys", json=survey_payload)
+            assert resp1.status_code == 201
+            data1 = resp1.json()
+            assert data1["survey_slug"] == f"nicolas-survey-{client_id}"
+            assert "2026-10-13T04:00:00" in data1["captured_at"]
+
+            # 2. Idempotent retry with same client_survey_id returns the existing survey without duplicates
+            resp2 = await client.post("/api/rooms/nicolas/surveys", json=survey_payload)
+            assert resp2.status_code == 201
+            data2 = resp2.json()
+            assert data2["id"] == data1["id"]
+            assert data2["survey_slug"] == data1["survey_slug"]
+
+            # Verify survey count for nicolas has only 1 added survey
+            list_resp = await client.get("/api/rooms/nicolas/surveys")
+            assert list_resp.status_code == 200
+            surveys = list_resp.json()
+            matching = [s for s in surveys if s["survey_slug"] == f"nicolas-survey-{client_id}"]
+            assert len(matching) == 1
+
+            # 3. Dead-zone survey with readings: [] persists empty survey without server fallback
+            dead_zone_payload = {
+                "label": "Basement Dead Zone Probe",
+                "trigger_mode": "MANUAL_SURVEY",
+                "captured_at": fixed_ts,
+                "client_survey_id": "deadzone-keller-1",
+                "readings": [],
+            }
+            dz_resp = await client.post("/api/rooms/keller/surveys", json=dead_zone_payload)
+            assert dz_resp.status_code == 201
+            dz_data = dz_resp.json()
+            assert dz_data["readings"] == []
+            assert dz_data["best_5ghz_dbm"] is None
+            assert dz_data["best_24ghz_dbm"] is None
+            assert dz_data["wifi_health_grade"] == "CRITICAL"
+
+
+@pytest.mark.asyncio
 async def test_all_11_rooms_seeded_idempotently_in_live_postgres():
     pg_url = os.getenv(
         "TEST_POSTGRES_URL",
