@@ -34,6 +34,15 @@ from app.modules.sonos_telemetry import (
     SonosTelemetryPort,
 )
 from app.modules.telemetry_daemon import ScheduledTelemetryCollector
+from app.modules.telegram_alerts import (
+    AlertChannelPort,
+    TelegramAlertAdapter,
+)
+from app.modules.watchdog_engine import (
+    WatchdogEngine,
+    WatchdogEnginePort,
+    WatchdogStatusSchema,
+)
 from app.modules.wifi_omada import (
     FakeWiFiAdapter,
     OmadaAndAdbWiFiAdapter,
@@ -77,6 +86,8 @@ def create_app(
     wifi_adapter: WiFiTelemetryPort | None = None,
     probe_adapter: NetworkProbePort | None = None,
     diagnostic_engine: DiagnosticEnginePort | None = None,
+    watchdog_engine: WatchdogEnginePort | None = None,
+    alert_channel: AlertChannelPort | None = None,
     enable_daemon: bool = False,
 ) -> FastAPI:
     engine, session_factory = build_engine_and_sessionmaker(database_url)
@@ -98,6 +109,12 @@ def create_app(
     default_diagnostic_engine: DiagnosticEnginePort = (
         diagnostic_engine or DiagnosticEngine()
     )
+    default_watchdog_engine: WatchdogEnginePort = (
+        watchdog_engine or WatchdogEngine()
+    )
+    default_alert_channel: AlertChannelPort = (
+        alert_channel or TelegramAlertAdapter()
+    )
     default_daemon = ScheduledTelemetryCollector(
         session_factory=session_factory,
         sonos_adapter=default_adapter,
@@ -115,6 +132,8 @@ def create_app(
         app.state.wifi_adapter = default_wifi_adapter
         app.state.probe_adapter = default_probe_adapter
         app.state.diagnostic_engine = default_diagnostic_engine
+        app.state.watchdog_engine = default_watchdog_engine
+        app.state.alert_channel = default_alert_channel
         app.state.telemetry_daemon = default_daemon
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -143,6 +162,8 @@ def create_app(
     app.state.wifi_adapter = default_wifi_adapter
     app.state.probe_adapter = default_probe_adapter
     app.state.diagnostic_engine = default_diagnostic_engine
+    app.state.watchdog_engine = default_watchdog_engine
+    app.state.alert_channel = default_alert_channel
     app.state.telemetry_daemon = default_daemon
 
     app.add_middleware(
@@ -174,6 +195,12 @@ def create_app(
 
     def get_diagnostic_engine(request: Request) -> DiagnosticEnginePort:
         return request.app.state.diagnostic_engine
+
+    def get_watchdog_engine(request: Request) -> WatchdogEnginePort:
+        return request.app.state.watchdog_engine
+
+    def get_alert_channel(request: Request) -> AlertChannelPort:
+        return request.app.state.alert_channel
 
 
     @app.get("/api/health")
@@ -580,6 +607,33 @@ def create_app(
     async def trigger_daemon_collect(request: Request) -> dict[str, Any]:
         daemon: ScheduledTelemetryCollector = request.app.state.telemetry_daemon
         return await daemon.collect_cycle()
+
+    # --- 24/7 Autonomous Watchdog & Telegram Alert Endpoints ---
+    @app.get("/api/watchdog/status")
+    async def get_watchdog_status(
+        engine: WatchdogEnginePort = Depends(get_watchdog_engine),
+        channel: AlertChannelPort = Depends(get_alert_channel),
+    ) -> dict[str, Any]:
+        status_dict = engine.get_status().model_dump()
+        status_dict["telegram_configured"] = channel.is_configured()
+        return status_dict
+
+    @app.post("/api/watchdog/toggle-auto-heal")
+    async def toggle_auto_heal(
+        enabled: bool = Query(True),
+        engine: WatchdogEnginePort = Depends(get_watchdog_engine),
+    ) -> dict[str, Any]:
+        engine.set_auto_heal(enabled)
+        return {"auto_heal_enabled": engine.is_auto_heal_enabled()}
+
+    @app.post("/api/watchdog/test-alert")
+    async def test_watchdog_alert(
+        channel: AlertChannelPort = Depends(get_alert_channel),
+    ) -> dict[str, Any]:
+        delivered = await channel.send_raw_message(
+            "🔔 *Test Alert from Sonos Network Watchdog*\n\nAutonomous alerting pipeline is operational."
+        )
+        return {"status": "ok", "delivered": delivered}
 
     return app
 
