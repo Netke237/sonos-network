@@ -161,11 +161,21 @@
       "status": "in_progress",
       "branch": "board/phase-3-watchdog-telegram-b79e2c41",
       "issue": 30,
-      "plan_audit_rounds": 0,
+      "plan_audit_rounds": 1,
       "plan_audit_clean": false,
       "code_audit_rounds": 0,
       "audit_clean": false,
-      "rounds": []
+      "rounds": [
+        {
+          "stage": "plan",
+          "round": 1,
+          "reviewer": "249ae7fc-a034-4b70-8317-5bc78b3b77de (Independent Plan Gate Auditor)",
+          "findings_count": 6,
+          "findings": ["P3-F-01", "P3-F-02", "P3-F-03", "P3-F-04", "P3-F-05", "P3-F-06"],
+          "fixes": "Escalated threshold (>3 critical findings) to Kenneth and resolved all 6 findings in docs/specs/phase-3-watchdog-telegram-distribution-spec.md and docs/adr/0006-...md: P3-F-01 (is_root_healthy or startsWith guard for designated STP root), P3-F-02 (atomic repo.apply_ghost_flush call on auto-heal), P3-F-03 (explicit null guards for Beam/Ethernet ofdm_ani_level and phy_error_rate), P3-F-04 (standardized canonical WatchdogAnomalyType enum), P3-F-05 (household-scoped debouncer for STP_ROOT_USURPED to prevent alert flooding), and P3-F-06 (suppression of duplicate secondary RESOLVED cards for auto-healed incidents).",
+          "outstanding": []
+        }
+      ]
     }
   ],
   "task_backlog": {

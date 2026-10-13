@@ -20,16 +20,17 @@ Phase 1 deployed the centralized Mini PC platform (`FastAPI + PostgreSQL`), Phas
 
 1. **Autonomous 24/7 Watchdog Engine (`backend/app/modules/watchdog_engine.py`)**:
    - Integrated with the existing background `telemetry_daemon` (running every 60s, or on-demand).
-   - Evaluates system state against defined alert thresholds:
-     - `GHOST_GROUP_DETECTED`: Any zone where `is_ghost_group == True`.
-     - `STP_ROOT_USURPED`: Designated root is not `9000.542a1b63fe6e` (`Wohnzimmer_Bookshelf`).
-     - `EMI_BURST_DETECTED`: Any speaker reporting `phy_error_rate > 100.0` or `ofdm_ani_level >= 7`.
-     - `PLAYER_OFFLINE`: Any Sonos player transitioning from reachable to unreachable.
-   - **Incident Debouncing**: State transitions trigger alerts once, suppressing duplicate notices for 15 minutes unless state changes or resolves.
+   - Evaluates system state against defined alert thresholds using canonical `WatchdogAnomalyType`:
+     - `GHOST_GROUP`: Any zone where `is_ghost_group == True`.
+     - `STP_ROOT_USURPED`: Evaluates `snapshot.is_root_healthy is False` or `not snapshot.designated_stp_root.strip().lower().startswith("9000.542a1b63fe6e")`, scoped to a single household-level debounced incident card.
+     - `EMI_BURST`: Any speaker with null-safe telemetry reporting `(p.ofdm_ani_level is not None and p.ofdm_ani_level >= 7) or (p.phy_error_rate is not None and p.phy_error_rate > 100.0)`.
+     - `PLAYER_OFFLINE`: Any Sonos player transitioning from reachable to unreachable (`is_reachable == False`).
+   - **Incident Debouncing**: State transitions trigger alerts once, suppressing duplicate notices for 15 minutes unless state changes or resolves. Auto-healed incidents terminate cleanly without secondary duplicate RESOLVED alerts.
 
 2. **Autonomous Ghost Group Self-Healing Policy (`AutoHealPolicy`)**:
    - `auto_heal_ghost_groups` is enabled by default (`true`).
-   - When `GHOST_GROUP_DETECTED` fires, the watchdog automatically executes UPnP `BecomeCoordinatorOfStandaloneGroup` across affected zones within 5 seconds.
+   - When `GHOST_GROUP` fires, the watchdog automatically executes UPnP `BecomeCoordinatorOfStandaloneGroup` across affected zones within 5 seconds.
+   - **Atomic PostgreSQL Synchronization**: Calls `await repo.apply_ghost_flush(flush_result)` immediately to keep the database and all clients synchronized without waiting for the next background collection cycle.
    - Posts an immediate notification: *"⚡ Ghost Group Auto-Healed on [Zone]: Restored standalone coordinator to prevent Spotify playback lockup."*
    - Physical faults (STP root usurpation, hardware EMI) are not auto-healed; the watchdog alerts Kenneth with concrete physical remediation instructions.
 
