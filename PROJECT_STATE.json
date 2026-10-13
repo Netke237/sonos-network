@@ -1,7 +1,7 @@
 {
   "project": "sonos-network",
   "repo": "Netke237/sonos-network",
-  "active_phase": null,
+  "active_phase": "PHASE-3-WATCHDOG-TELEGRAM",
   "audit_rule": {
     "max_rounds_per_stage": 3,
     "gate_criteria": [
@@ -154,6 +154,18 @@
           "outstanding": []
         }
       ]
+    },
+    {
+      "id": "PHASE-3-WATCHDOG-TELEGRAM",
+      "title": "Autonomous 24/7 Watchdog, Telegram Self-Healing & Companion Distribution",
+      "status": "in_progress",
+      "branch": "board/phase-3-watchdog-telegram-b79e2c41",
+      "issue": 30,
+      "plan_audit_rounds": 0,
+      "plan_audit_clean": false,
+      "code_audit_rounds": 0,
+      "audit_clean": false,
+      "rounds": []
     }
   ],
   "task_backlog": {
