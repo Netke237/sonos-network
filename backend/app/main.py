@@ -622,6 +622,18 @@ def create_app(
         daemon: ScheduledTelemetryCollector = request.app.state.telemetry_daemon
         return await daemon.collect_cycle()
 
+    @app.post("/api/daemon/toggle", response_model=DaemonStatusSchema)
+    async def toggle_daemon(
+        request: Request,
+        enabled: bool = Query(True),
+    ) -> DaemonStatusSchema:
+        daemon: ScheduledTelemetryCollector = request.app.state.telemetry_daemon
+        if enabled:
+            await daemon.start()
+        else:
+            await daemon.stop()
+        return daemon.status()
+
     # --- 24/7 Autonomous Watchdog & Telegram Alert Endpoints ---
     @app.get("/api/watchdog/status")
     async def get_watchdog_status(
