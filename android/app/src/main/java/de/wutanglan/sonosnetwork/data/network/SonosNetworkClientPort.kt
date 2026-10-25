@@ -13,5 +13,9 @@ interface SonosNetworkClientPort {
     suspend fun flushGhostGroups(zoneIps: List<String>? = null): Result<GhostFlushResultDto>
     suspend fun pollNow(): Result<HouseholdSonosSnapshotDto>
     suspend fun pingSweep(): Result<PingSweepResultDto>
+    suspend fun getDaemonStatus(): Result<DaemonStatusDto>
+    suspend fun triggerDaemonCollect(): Result<Unit>
+    suspend fun toggleDaemon(enabled: Boolean): Result<DaemonStatusDto>
+    suspend fun deepReset(zoneIps: List<String>? = null): Result<DeepResetResultDto>
     fun streamLiveRf(roomSlug: String): Flow<LiveRfFrameDto>
 }

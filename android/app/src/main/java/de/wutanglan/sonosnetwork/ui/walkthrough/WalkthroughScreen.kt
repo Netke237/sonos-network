@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -199,6 +200,8 @@ fun WalkthroughScreen(
 
         // Live Scan Preview Card
         state.lastScanResult?.let { scan ->
+            val sortedReadings = scan.readings.sortedByDescending { it.rssi_dbm }
+
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -206,11 +209,31 @@ fun WalkthroughScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Last Scan Results (${scan.readings.size} BSSIDs heard)",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Last Scan Results (${scan.readings.size} BSSIDs heard)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
+                            if (sortedReadings.isNotEmpty()) {
+                                Surface(
+                                    color = Color(0xFFE8F5E9),
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    Text(
+                                        text = "Ranked #1 → #${sortedReadings.size}",
+                                        color = Color(0xFF2E7D32),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
 
                         // Connected network row
                         scan.connected_ssid?.let { ssid ->
@@ -226,32 +249,100 @@ fun WalkthroughScreen(
                         val best5G = scan.readings.filter { it.band == "5GHz" }.maxByOrNull { it.rssi_dbm }
                         val best24G = scan.readings.filter { it.band == "2.4GHz" }.maxByOrNull { it.rssi_dbm }
 
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(
-                                text = "Best 5G: ${best5G?.let { "${it.rssi_dbm} dBm (${it.ap_name ?: it.ssid})" } ?: "None"}",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = "Best 2.4G: ${best24G?.let { "${it.rssi_dbm} dBm (${it.ap_name ?: it.ssid})" } ?: "None"}",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "BEST 5 GHz",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = best5G?.let { "${it.rssi_dbm} dBm (${it.ap_name ?: it.ssid ?: "5G"})" } ?: "None",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "BEST 2.4 GHz",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = best24G?.let { "${it.rssi_dbm} dBm (${it.ap_name ?: it.ssid ?: "2.4G"})" } ?: "None",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 }
             }
 
-            // Heard BSSID items
-            items(scan.readings) { bssidItem ->
-                BssidReadingItemView(bssidItem)
+            // Wi-Fi Signal Quality Guide
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "SIGNAL QUALITY GUIDE",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("● ≥ -55: Excellent", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF2E7D32))
+                            Text("● -56..-67: Good", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1565C0))
+                            Text("● -68..-75: Fair", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE65100))
+                            Text("● < -75: Poor", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFC62828))
+                        }
+                    }
+                }
+            }
+
+            // Dedicated Column Header Row
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "NETWORK / ACCESS POINT",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        text = "SIGNAL QUALITY (dBm)",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+            }
+
+            // Heard BSSID items (Ranked Best to Worst)
+            itemsIndexed(sortedReadings) { index, bssidItem ->
+                BssidReadingItemView(reading = bssidItem, rank = index + 1)
             }
         }
     }
 }
 
 @Composable
-fun BssidReadingItemView(reading: ScannedBssid) {
+fun BssidReadingItemView(reading: ScannedBssid, rank: Int) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(8.dp),
@@ -267,12 +358,19 @@ fun BssidReadingItemView(reading: ScannedBssid) {
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
+                        text = "#$rank",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
                         text = reading.ssid ?: "<Hidden SSID>",
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    ClassificationBadge(reading.classification)
+                    ClassificationBadge(reading.classification, reading.ap_name)
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -281,28 +379,53 @@ fun BssidReadingItemView(reading: ScannedBssid) {
                     color = Color.Gray
                 )
             }
-            Text(
-                text = "${reading.rssi_dbm} dBm",
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
-                color = when {
-                    reading.rssi_dbm >= -55 -> Color(0xFF2E7D32)
-                    reading.rssi_dbm >= -67 -> Color(0xFF1565C0)
-                    reading.rssi_dbm >= -75 -> Color(0xFFE65100)
-                    else -> Color(0xFFC62828)
+            Column(horizontalAlignment = Alignment.End) {
+                val (qualityLabel, qualityColor) = when {
+                    reading.rssi_dbm >= -55 -> "EXCELLENT" to Color(0xFF2E7D32)
+                    reading.rssi_dbm >= -67 -> "GOOD" to Color(0xFF1565C0)
+                    reading.rssi_dbm >= -75 -> "FAIR" to Color(0xFFE65100)
+                    else -> "POOR" to Color(0xFFC62828)
                 }
-            )
+                Text(
+                    text = "${reading.rssi_dbm} dBm",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = qualityColor
+                )
+                Text(
+                    text = "● $qualityLabel",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = qualityColor
+                )
+            }
         }
     }
 }
 
 @Composable
-fun ClassificationBadge(classification: String) {
+fun ClassificationBadge(classification: String, apName: String? = null) {
     val (label, bg, fg) = when (classification) {
-        BssidClassifier.OWN_MANAGED_AP -> Triple("Managed AP", Color(0xFFE8F5E9), Color(0xFF2E7D32))
-        BssidClassifier.SONOSNET_MESH -> Triple("SonosNet", Color(0xFFE3F2FD), Color(0xFF1565C0))
-        BssidClassifier.ROGUE_OWN_RADIO -> Triple("Rogue Radio", Color(0xFFFFEBEE), Color(0xFFC62828))
-        else -> Triple("Neighbor", Color(0xFFF5F5F5), Color(0xFF616161))
+        BssidClassifier.OWN_MANAGED_AP -> Triple(
+            apName ?: "Managed AP",
+            Color(0xFFE8F5E9),
+            Color(0xFF2E7D32)
+        )
+        BssidClassifier.SONOSNET_MESH -> Triple(
+            "SonosNet",
+            Color(0xFFE3F2FD),
+            Color(0xFF1565C0)
+        )
+        BssidClassifier.ROGUE_OWN_RADIO -> Triple(
+            apName ?: "Rogue Radio",
+            Color(0xFFFFEBEE),
+            Color(0xFFC62828)
+        )
+        else -> Triple(
+            "Neighbor",
+            Color(0xFFF5F5F5),
+            Color(0xFF616161)
+        )
     }
     Surface(
         color = bg,

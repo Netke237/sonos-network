@@ -2,9 +2,7 @@ package de.wutanglan.sonosnetwork.ui.actions
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import de.wutanglan.sonosnetwork.data.models.GhostFlushResultDto
-import de.wutanglan.sonosnetwork.data.models.LiveRfFrameDto
-import de.wutanglan.sonosnetwork.data.models.PingSweepResultDto
+import de.wutanglan.sonosnetwork.data.models.*
 import de.wutanglan.sonosnetwork.data.network.SonosNetworkClientPort
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +20,12 @@ data class ActionsUiState(
     val pollSuccessMessage: String? = null,
     val isRunningPingSweep: Boolean = false,
     val pingSweepResult: PingSweepResultDto? = null,
+    val daemonStatus: DaemonStatusDto? = null,
+    val isLoadingDaemon: Boolean = false,
+    val isTriggeringDaemon: Boolean = false,
+    val isDeepResetting: Boolean = false,
+    val deepResetResult: DeepResetResultDto? = null,
+    val deepResetDialogVisible: Boolean = false,
     val selectedOscilloscopeRoom: String = "wohnzimmer",
     val isStreamingOscilloscope: Boolean = false,
     val livePhyHistory: List<Double> = emptyList(),
@@ -41,6 +45,10 @@ class ActionsViewModel(
 
     private var oscilloscopeJob: Job? = null
 
+    init {
+        loadDaemonStatus()
+    }
+
     fun flushGhostGroups(zoneIps: List<String>? = null) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isFlushingGhostGroups = true, errorMessage = null)
@@ -55,7 +63,7 @@ class ActionsViewModel(
             } else {
                 _uiState.value = _uiState.value.copy(
                     isFlushingGhostGroups = false,
-                    errorMessage = result.exceptionOrNull()?.message ?: "Failed to flush ghost groups"
+                    errorMessage = formatError("Ghost group flush", result.exceptionOrNull())
                 )
             }
         }
@@ -78,7 +86,7 @@ class ActionsViewModel(
             } else {
                 _uiState.value = _uiState.value.copy(
                     isPollingNow = false,
-                    errorMessage = result.exceptionOrNull()?.message ?: "Poll request failed"
+                    errorMessage = formatError("Sonos poll", result.exceptionOrNull())
                 )
             }
         }
@@ -97,9 +105,21 @@ class ActionsViewModel(
             } else {
                 _uiState.value = _uiState.value.copy(
                     isRunningPingSweep = false,
-                    errorMessage = result.exceptionOrNull()?.message ?: "Ping sweep failed"
+                    errorMessage = formatError("Ping sweep", result.exceptionOrNull())
                 )
             }
+        }
+    }
+
+    private fun formatError(prefix: String, err: Throwable?): String {
+        val msg = err?.message ?: ""
+        return when {
+            msg.contains("timeout", ignoreCase = true) ->
+                "$prefix timed out while querying players across the house. Please check network connectivity and try again."
+            msg.isNotBlank() ->
+                "$prefix: $msg"
+            else ->
+                "$prefix failed"
         }
     }
 
@@ -169,6 +189,79 @@ class ActionsViewModel(
             latestAniLevel = sample.ofdm_ani_level,
             lastOscilloscopeTimestamp = sample.captured_at
         )
+    }
+
+    fun loadDaemonStatus() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoadingDaemon = true)
+            val result = networkClient.getDaemonStatus()
+            if (result.isSuccess) {
+                _uiState.value = _uiState.value.copy(
+                    isLoadingDaemon = false,
+                    daemonStatus = result.getOrThrow()
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(isLoadingDaemon = false)
+            }
+        }
+    }
+
+    fun triggerDaemonCollect() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isTriggeringDaemon = true, errorMessage = null)
+            val result = networkClient.triggerDaemonCollect()
+            if (result.isSuccess) {
+                loadDaemonStatus()
+                _uiState.value = _uiState.value.copy(
+                    isTriggeringDaemon = false,
+                    pollSuccessMessage = "✓ 24/7 Daemon collection cycle completed."
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    isTriggeringDaemon = false,
+                    errorMessage = formatError("Daemon collect", result.exceptionOrNull())
+                )
+            }
+        }
+    }
+
+    fun toggleDaemon() {
+        viewModelScope.launch {
+            val current = _uiState.value.daemonStatus?.is_running ?: true
+            val target = !current
+            val result = networkClient.toggleDaemon(target)
+            if (result.isSuccess) {
+                _uiState.value = _uiState.value.copy(daemonStatus = result.getOrThrow())
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = formatError("Toggle daemon", result.exceptionOrNull())
+                )
+            }
+        }
+    }
+
+    fun executeDeepReset(zoneIps: List<String>? = null) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isDeepResetting = true, errorMessage = null)
+            val result = networkClient.deepReset(zoneIps)
+            if (result.isSuccess) {
+                val data = result.getOrThrow()
+                _uiState.value = _uiState.value.copy(
+                    isDeepResetting = false,
+                    deepResetResult = data,
+                    deepResetDialogVisible = true
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    isDeepResetting = false,
+                    errorMessage = formatError("Hardcore Deep Reset", result.exceptionOrNull())
+                )
+            }
+        }
+    }
+
+    fun dismissDeepResetDialog() {
+        _uiState.value = _uiState.value.copy(deepResetDialogVisible = false)
     }
 
     fun clearMessages() {

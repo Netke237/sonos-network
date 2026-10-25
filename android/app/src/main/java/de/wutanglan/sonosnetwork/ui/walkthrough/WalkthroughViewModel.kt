@@ -143,6 +143,15 @@ class WalkthroughViewModel(
                 return@launch
             }
 
+            if (!scanResult.is_fresh) {
+                _uiState.value = _uiState.value.copy(
+                    isScanning = false,
+                    isThrottled = false,
+                    errorMessage = "Wi-Fi scan failed or permissions missing. Please verify Location toggle and permissions are enabled."
+                )
+                return@launch
+            }
+
             _uiState.value = _uiState.value.copy(
                 isScanning = false,
                 isThrottled = false,

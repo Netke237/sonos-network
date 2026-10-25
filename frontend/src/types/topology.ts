@@ -577,6 +577,23 @@ export interface DaemonCollectResult {
   executed_at: string;
 }
 
+export interface DeepResetZoneResult {
+  zone_name: string;
+  ip_address: string;
+  rincon_uuid: string;
+  stopped: boolean;
+  queue_cleared: boolean;
+  coordinator_reset: boolean;
+  status: string;
+  details: string;
+}
 
-
-
+export interface DeepResetResult {
+  total_targeted: number;
+  success_count: number;
+  reset_zones: string[];
+  failed_zones: string[];
+  results: DeepResetZoneResult[];
+  elapsed_ms: number;
+  captured_at: string;
+}

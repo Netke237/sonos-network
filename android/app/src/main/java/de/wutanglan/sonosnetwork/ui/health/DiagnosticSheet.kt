@@ -20,6 +20,10 @@ import de.wutanglan.sonosnetwork.data.models.RoomDiagnosticSummaryDto
 fun RoomDiagnosticModalSheet(
     diagnostic: RoomDiagnosticSummaryDto?,
     isLoading: Boolean,
+    isRemediating: Boolean = false,
+    remediationMessage: String? = null,
+    onFlushGhostGroups: (List<String>) -> Unit = {},
+    onDeepReset: (List<String>) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(
@@ -145,6 +149,72 @@ fun RoomDiagnosticModalSheet(
                                     text = "ANI: ${player.ofdm_ani_level ?: "N/A"}  |  PHY: ${player.phy_error_rate?.let { String.format("%.1f err/s", it) } ?: "0.0"}  |  STP Cost: ${player.stp_path_cost ?: 0}",
                                     fontSize = 11.sp,
                                     color = Color.Gray
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Quick Audio Remediation Toolbar for this room's players
+            val playerIps = diagnostic.sonos_pillar.players.mapNotNull { it.ip_address }
+            if (playerIps.isNotEmpty()) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("⚡ Room Audio Remediation", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            if (isRemediating) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            }
+                        }
+                        Text(
+                            text = "Unclog or unfreeze ${diagnostic.room_name} (${playerIps.size} player${if (playerIps.size > 1) "s" else ""}) without interrupting other rooms:",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { onFlushGhostGroups(playerIps) },
+                                enabled = !isRemediating,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(if (isRemediating) "..." else "🧹 Soft Unclog", fontSize = 12.sp)
+                            }
+                            Button(
+                                onClick = { onDeepReset(playerIps) },
+                                enabled = !isRemediating,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(if (isRemediating) "..." else "🚨 Deep Reset", fontSize = 12.sp)
+                            }
+                        }
+                        if (remediationMessage != null) {
+                            Surface(
+                                color = if (remediationMessage.startsWith("✓")) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = remediationMessage,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (remediationMessage.startsWith("✓")) Color(0xFF2E7D32) else Color(0xFFC62828),
+                                    modifier = Modifier.padding(8.dp)
                                 )
                             }
                         }

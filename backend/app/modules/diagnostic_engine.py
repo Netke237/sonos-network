@@ -66,10 +66,18 @@ def grade_sonos_player_rf(
             return HealthGrade.MARGINAL.value
         return HealthGrade.GOOD.value
 
-    if ofdm_ani_level >= 7 or err > 100.0:
+    # Playback-centric: Only CRITICAL if packets are actively dropping or ping times out
+    if err > 100.0 or rtt > 250.0:
         return HealthGrade.CRITICAL.value
-    if ofdm_ani_level >= 4 or err >= 20.0:
+
+    # MARGINAL if packet error rate is elevated, RTT is slow, or ambient noise with mild errors
+    if err >= 20.0 or rtt > 100.0:
         return HealthGrade.MARGINAL.value
+    if ofdm_ani_level >= 7 and err > 0.0:
+        return HealthGrade.MARGINAL.value
+    if ofdm_ani_level >= 5 and err >= 10.0:
+        return HealthGrade.MARGINAL.value
+
     return HealthGrade.GOOD.value
 
 
@@ -131,8 +139,12 @@ def grade_sonos_player_link(
         if not ht_fwd:
             ht_fwd, _ = _find_player_forwarding_links(player.rincon_uuid, mesh_links)
         if ht_fwd:
-            best_bond = max(ht_fwd, key=lambda l: min(l.from_db, l.to_db))
-            min_snr = min(best_bond.from_db, best_bond.to_db)
+            def ht_effective_snr(link: SonosMeshLinkDto) -> int:
+                valid = [db for db in (link.from_db, link.to_db) if db > 0]
+                return min(valid) if valid else 0
+
+            best_bond = max(ht_fwd, key=ht_effective_snr)
+            min_snr = ht_effective_snr(best_bond)
             if min_snr < 20:
                 return HealthGrade.CRITICAL.value, min_snr
             if min_snr < 30:
@@ -162,15 +174,22 @@ def grade_sonos_player_link(
     fwd_links, _ = _find_player_forwarding_links(player.rincon_uuid, mesh_links)
     active_snr: int | None = None
     if fwd_links:
-        best_fwd = max(fwd_links, key=lambda l: min(l.from_db, l.to_db))
-        active_snr = min(best_fwd.from_db, best_fwd.to_db)
+        def link_effective_snr(link: SonosMeshLinkDto) -> int:
+            valid = [db for db in (link.from_db, link.to_db) if db > 0]
+            return min(valid) if valid else 0
+
+        best_fwd = max(fwd_links, key=link_effective_snr)
+        active_snr = link_effective_snr(best_fwd)
 
     stp_cost = player.stp_path_cost if player.stp_path_cost is not None else 200
 
-    if not is_root_valid or stp_cost > 450 or (active_snr is not None and active_snr < 20):
+    # Playback-centric:
+    # CRITICAL strictly if designated root is usurped / invalid, or active link completely collapsed (< 10 dB)
+    if not is_root_valid or (active_snr is not None and active_snr < 10):
         return HealthGrade.CRITICAL.value, active_snr
 
-    if 301 <= stp_cost <= 450 or (active_snr is not None and 20 <= active_snr <= 29):
+    # MARGINAL if taking a hopping road (stp_cost > 300) or link SNR is weak (10-19 dB)
+    if stp_cost > 300 or (active_snr is not None and 10 <= active_snr < 20):
         return HealthGrade.MARGINAL.value, active_snr
 
     if active_snr is not None and active_snr >= 45 and stp_cost <= 200:
@@ -463,7 +482,11 @@ class DiagnosticEngine:
             )
             peer_name: str | None = None
             if fwd_links:
-                best_fwd = max(fwd_links, key=lambda l: min(l.from_db, l.to_db))
+                def effective_snr(link: SonosMeshLinkDto) -> int:
+                    valid = [db for db in (link.from_db, link.to_db) if db > 0]
+                    return min(valid) if valid else 0
+
+                best_fwd = max(fwd_links, key=effective_snr)
                 peer_uuid = (
                     best_fwd.target_rincon_uuid
                     if best_fwd.source_rincon_uuid == p.rincon_uuid
@@ -630,13 +653,19 @@ class DiagnosticEngine:
             affected_names = [p.zone_name for p in emi_players]
             max_ani = max((p.ofdm_ani_level or 0) for p in emi_players)
             max_err = max((p.phy_error_rate or 0.0) for p in emi_players)
+            # Playback-centric: CRITICAL only if audio packets are severely dropping (>= 1000.0 err/s)
+            emi_severity = (
+                HealthGrade.CRITICAL.value
+                if max_err >= 1000.0
+                else HealthGrade.MARGINAL.value
+            )
             diagnostics.append(
                 RoomDiagnosticSchema(
                     id=f"diag-{room_slug}-emi-non-wifi-spike",
                     room_slug=room_slug,
                     room_name=room_name,
                     layer="SONOS",
-                    severity=HealthGrade.CRITICAL.value,
+                    severity=emi_severity,
                     rule_code="EMI_NON_WIFI_SPIKE",
                     title=f"Severe Non-Wi-Fi 2.4 GHz EMI Spike in {room_name} (ANI {max_ani}, {max_err:.1f} err/s)",
                     summary=(
@@ -786,9 +815,11 @@ class DiagnosticEngine:
                 ),
                 default=None,
             )
+            # Playback-centric: Multi-hop detour ("hopping road") is MARGINAL advisory unless
+            # link SNR severely collapses (< 20 dB) or the STP Root Bridge is usurped
             detour_severity = (
                 HealthGrade.CRITICAL.value
-                if max_cost > 450 or (min_snr is not None and min_snr < 20)
+                if (min_snr is not None and min_snr < 20) or not room_root_healthy
                 else HealthGrade.MARGINAL.value
             )
             detour_names = [p.zone_name for p in detour_players]

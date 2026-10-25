@@ -57,6 +57,8 @@ from app.modules.wifi_omada import (
 from app.repositories.topology_repository import SqlAlchemyTopologyRepository
 from app.schemas.topology import (
     DaemonStatusSchema,
+    DeepResetRequest,
+    DeepResetResult,
     FloorCreate,
     FloorRead,
     FloorUpdate,
@@ -94,7 +96,7 @@ def create_app(
     diagnostic_engine: DiagnosticEnginePort | None = None,
     watchdog_engine: WatchdogEnginePort | None = None,
     alert_channel: AlertChannelPort | None = None,
-    enable_daemon: bool = False,
+    enable_daemon: bool | None = None,
 ) -> FastAPI:
     engine, session_factory = build_engine_and_sessionmaker(database_url)
     default_adapter: SonosTelemetryPort = sonos_adapter or (
@@ -153,7 +155,12 @@ def create_app(
         async with session_factory() as session:
             await seed_initial_data(session)
         daemon_enabled = (
-            enable_daemon or os.getenv("ENABLE_TELEMETRY_DAEMON", "0") == "1"
+            enable_daemon
+            if enable_daemon is not None
+            else (
+                os.getenv("ENABLE_TELEMETRY_DAEMON", "0") == "1"
+                and database_url is None
+            )
         )
         if daemon_enabled:
             await default_daemon.start()
@@ -461,6 +468,14 @@ def create_app(
         result = await adapter.flush_ghost_groups(zone_ips=zone_ips)
         await repo.apply_ghost_flush(result)
         return result
+
+    @app.post("/api/actions/deep-reset", response_model=DeepResetResult)
+    async def deep_reset_action(
+        payload: DeepResetRequest | None = Body(default=None),
+        adapter: SonosTelemetryPort = Depends(get_sonos_adapter),
+    ) -> DeepResetResult:
+        zone_ips = payload.zone_ips if payload else None
+        return await adapter.deep_reset(zone_ips=zone_ips)
 
     # --- Wi-Fi Infrastructure & Room BSSID Surveys ---
     @app.get("/api/wifi/infrastructure", response_model=WiFiInfraSnapshot)
@@ -841,6 +856,330 @@ def create_app(
 </body>
 </html>
 """
+
+    @app.get("/hub", response_class=HTMLResponse)
+    async def operations_hub_page(request: Request) -> str:
+        return """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sonos Network Operations Hub</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --primary: #38bdf8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    body {
+      margin: 0;
+      padding: 24px 16px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      max-width: 720px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .header h1 {
+      margin: 0 0 6px;
+      font-size: 1.6rem;
+      color: var(--primary);
+    }
+    .header p {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+    }
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin: 0 0 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .badge-success { background: rgba(34, 197, 94, 0.15); color: var(--success); border: 1px solid var(--success); }
+    .badge-danger { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); }
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    button, select {
+      font-family: inherit;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      padding: 10px 16px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn-primary { background: #0284c7; color: white; }
+    .btn-primary:hover { background: #0369a1; }
+    .btn-danger { background: #dc2626; color: white; }
+    .btn-danger:hover { background: #b91c1c; }
+    .btn-secondary { background: #334155; color: var(--text); border-color: #475569; }
+    .btn-secondary:hover { background: #475569; }
+    select {
+      background: #0f172a;
+      color: var(--text);
+      border-color: var(--border);
+      flex: 1;
+      min-width: 200px;
+    }
+    .console-card {
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.85rem;
+      color: #38bdf8;
+      max-height: 240px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>⚡ Sonos Operations & Remediation Hub</h1>
+      <p>Mini PC (192.168.55.60) | 14-Player VLAN 10 Control Panel</p>
+    </div>
+
+    <!-- 24/7 Daemon Status Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>🤖 24/7 Telemetry & Auto-Heal Daemon</span>
+        <span id="daemon-badge" class="badge badge-success">Checking...</span>
+      </div>
+      <p style="color:var(--text-muted);font-size:0.85rem;margin:0 0 10px;">
+        Background engine polling all 14 players every 60s, logging RF metrics to PostgreSQL, and auto-flushing orphaned ghost groups.
+      </p>
+      <div id="daemon-stats" style="font-size:0.85rem;color:#cbd5e1;line-height:1.6;">
+        Loading daemon metrics...
+      </div>
+      <div class="btn-row">
+        <button class="btn-primary" onclick="triggerDaemon()">⚡ Trigger Daemon Collect Now</button>
+        <button class="btn-secondary" onclick="toggleDaemon()">⏸️ Toggle Pause/Resume</button>
+      </div>
+    </div>
+
+    <!-- Tier 1: Non-Invasive Quick Actions -->
+    <div class="card">
+      <div class="card-title">
+        <span>🧹 Tier 1: Non-Invasive Actions (Safe Mid-Stream)</span>
+      </div>
+      <p style="color:var(--text-muted);font-size:0.85rem;margin:0 0 10px;">
+        Routine maintenance that clears ghost coordinator bindings and audits RF without interrupting active music playback.
+      </p>
+      <div class="btn-row">
+        <button class="btn-secondary" onclick="flushGhostGroups()">🧹 1-Click Flush Ghost Groups</button>
+        <button class="btn-secondary" onclick="pollSonosNow()">📊 Poll Live Sonos Mesh</button>
+        <button class="btn-secondary" onclick="runPingSweep()">📶 ICMP Latency Sweep</button>
+      </div>
+    </div>
+
+    <!-- Tier 3: Hardcore Deep Remediation -->
+    <div class="card" style="border-color:#b91c1c;">
+      <div class="card-title" style="color:#f87171;">
+        <span>🚨 Tier 3: Hardcore Deep Reset & Unfreeze</span>
+      </div>
+      <p style="color:var(--text-muted);font-size:0.85rem;margin:0 0 12px;">
+        For zombied, stuck, or frozen speakers. Forcibly terminates hung playback threads (<code>AVTransport:Stop</code>), purges corrupt queues (<code>RemoveAllTracks</code>), restores standalone coordinator status, and re-announces UPnP.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <select id="deep-reset-target">
+          <option value="ALL">🚨 ALL Household Zones (12 Zones)</option>
+          <option value="192.168.10.230">Wohnzimmer_Bookshelf (192.168.10.230)</option>
+          <option value="192.168.10.241">Fernsehecke Beam (192.168.10.241)</option>
+          <option value="192.168.10.202">Küche (192.168.10.202)</option>
+          <option value="192.168.10.165">Nicolas (192.168.10.165)</option>
+          <option value="192.168.10.229">Noah (192.168.10.229)</option>
+          <option value="192.168.10.244">Noemi (192.168.10.244)</option>
+          <option value="192.168.10.131">Eltern (192.168.10.131)</option>
+          <option value="192.168.10.113">Elternbad (192.168.10.113)</option>
+          <option value="192.168.10.151">Büroecke (192.168.10.151)</option>
+          <option value="192.168.10.217">Keller (192.168.10.217)</option>
+          <option value="192.168.10.101">Wohnzimmer_Buchregal (192.168.10.101)</option>
+          <option value="192.168.10.160">Wohnzimmer_Esstisch (192.168.10.160)</option>
+        </select>
+        <button class="btn-danger" onclick="executeDeepReset()">🚨 Execute Hardcore Reset</button>
+      </div>
+    </div>
+
+    <!-- Output Console -->
+    <div class="card">
+      <div class="card-title">
+        <span>📟 Action Output Console</span>
+        <button style="padding:4px 8px;font-size:0.75rem;" class="btn-secondary" onclick="clearConsole()">Clear</button>
+      </div>
+      <div id="console" class="console-card">Ready. Select an action above to execute.</div>
+    </div>
+  </div>
+
+  <script>
+    let daemonRunning = true;
+
+    async function loadDaemonStatus() {
+      try {
+        const res = await fetch('/api/daemon/status');
+        const data = await res.json();
+        daemonRunning = data.is_running;
+        const badge = document.getElementById('daemon-badge');
+        badge.className = 'badge ' + (data.is_running ? 'badge-success' : 'badge-danger');
+        badge.textContent = data.is_running ? '● ACTIVE' : '● PAUSED';
+
+        const lastRun = data.last_cycle_at ? new Date(data.last_cycle_at).toLocaleTimeString() : 'N/A';
+        document.getElementById('daemon-stats').innerHTML = 
+          `Interval: <b>${data.interval_sec}s</b> &nbsp;|&nbsp; Completed Cycles: <b>${data.total_cycles}</b> &nbsp;|&nbsp; Last Cycle: <b>${lastRun}</b><br/>` +
+          `Auto-Heal: <span style="color:#4ade80;">Active</span> &nbsp;|&nbsp; Error: ${data.last_error || 'None'}`;
+      } catch (e) {
+        document.getElementById('daemon-badge').textContent = 'OFFLINE';
+      }
+    }
+
+    function log(msg) {
+      const el = document.getElementById('console');
+      const time = new Date().toLocaleTimeString();
+      el.textContent = `[${time}] ${msg}\\n` + el.textContent;
+    }
+
+    function clearConsole() {
+      document.getElementById('console').textContent = 'Console cleared.';
+    }
+
+    async function triggerDaemon() {
+      log('Triggering 24/7 daemon collection cycle...');
+      try {
+        const res = await fetch('/api/daemon/collect-now', { method: 'POST' });
+        const data = await res.json();
+        log(`✓ Daemon Cycle Complete: batch=${data.batch_id}, players=${data.total_players}`);
+        loadDaemonStatus();
+      } catch (e) {
+        log(`❌ Error triggering daemon: ${e.message}`);
+      }
+    }
+
+    async function toggleDaemon() {
+      const nextState = !daemonRunning;
+      log(`Setting daemon enabled=${nextState}...`);
+      try {
+        const res = await fetch(`/api/daemon/toggle?enabled=${nextState}`, { method: 'POST' });
+        const data = await res.json();
+        log(`✓ Daemon status updated: is_running=${data.is_running}`);
+        loadDaemonStatus();
+      } catch (e) {
+        log(`❌ Error toggling daemon: ${e.message}`);
+      }
+    }
+
+    async function flushGhostGroups() {
+      log('Executing 1-Click Ghost Group Flush across all zones...');
+      try {
+        const res = await fetch('/api/actions/flush-ghost-groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const data = await res.json();
+        log(`✓ Ghost Groups Flushed: ${data.flushed_count} zones reset (${data.flushed_zones.join(', ') || 'All clean'})`);
+      } catch (e) {
+        log(`❌ Error flushing ghost groups: ${e.message}`);
+      }
+    }
+
+    async function pollSonosNow() {
+      log('Polling live Sonos mesh telemetry across all 14 players...');
+      try {
+        const res = await fetch('/api/actions/poll-now', { method: 'POST' });
+        const data = await res.json();
+        log(`✓ Live Poll Complete: ${data.players.length} players probed on VLAN 10.`);
+      } catch (e) {
+        log(`❌ Error polling Sonos: ${e.message}`);
+      }
+    }
+
+    async function runPingSweep() {
+      log('Running ICMP latency and jitter sweep...');
+      try {
+        const res = await fetch('/api/actions/ping-sweep', { method: 'POST' });
+        const data = await res.json();
+        log(`✓ Ping Sweep Complete: ${data.reachable_count}/${data.total_probed} reachable, avg RTT: ${data.avg_rtt_ms.toFixed(1)}ms`);
+      } catch (e) {
+        log(`❌ Error running ping sweep: ${e.message}`);
+      }
+    }
+
+    async function executeDeepReset() {
+      const select = document.getElementById('deep-reset-target');
+      const targetVal = select.value;
+      const targetLabel = select.options[select.selectedIndex].text;
+      
+      const payload = targetVal === 'ALL' ? {} : { zone_ips: [targetVal] };
+      log(`🚨 Executing Hardcore Deep Reset on: ${targetLabel}...`);
+      
+      try {
+        const res = await fetch('/api/actions/deep-reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        log(`✓ Deep Reset Finished in ${data.elapsed_ms}ms: ${data.success_count}/${data.total_targeted} zones restored.`);
+        if (data.results) {
+          data.results.forEach(r => {
+            log(`   - ${r.zone_name} (${r.ip_address}): ${r.status}`);
+          });
+        }
+      } catch (e) {
+        log(`❌ Error executing deep reset: ${e.message}`);
+      }
+    }
+
+    loadDaemonStatus();
+    setInterval(loadDaemonStatus, 15000);
+  </script>
+</body>
+</html>"""
 
     return app
 

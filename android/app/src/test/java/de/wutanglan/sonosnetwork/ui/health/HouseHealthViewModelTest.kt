@@ -71,4 +71,38 @@ class HouseHealthViewModelTest {
         viewModel.closeDiagnosticSheet()
         assertFalse(viewModel.uiState.value.isDiagnosticSheetOpen)
     }
+
+    @Test
+    fun testFlushGhostGroupsForIps() = runTest {
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.isRemediating)
+        assertNull(viewModel.uiState.value.remediationMessage)
+
+        viewModel.flushGhostGroupsForIps(listOf("192.168.10.162"))
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.isRemediating)
+        assertNotNull(viewModel.uiState.value.remediationMessage)
+        assertTrue(viewModel.uiState.value.remediationMessage!!.startsWith("✓"))
+
+        viewModel.clearRemediationMessage()
+        assertNull(viewModel.uiState.value.remediationMessage)
+    }
+
+    @Test
+    fun testDeepResetForIps() = runTest {
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.isRemediating)
+        assertNull(viewModel.uiState.value.remediationMessage)
+
+        viewModel.deepResetForIps(listOf("192.168.10.162"))
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.isRemediating)
+        assertNotNull(viewModel.uiState.value.remediationMessage)
+        assertTrue(viewModel.uiState.value.remediationMessage!!.contains("Deep reset complete"))
+
+        viewModel.clearRemediationMessage()
+        assertNull(viewModel.uiState.value.remediationMessage)
+    }
 }

@@ -490,3 +490,43 @@ data class LiveRfFrameDto(
     val captured_at: String = timestamp ?: "",
     val samples: List<LiveRfSampleDto> = emptyList()
 )
+
+@Serializable
+data class DaemonStatusDto(
+    val is_running: Boolean,
+    val interval_sec: Double,
+    val retention_days: Int,
+    val last_cycle_at: String? = null,
+    val total_cycles: Int = 0,
+    val last_error: String? = null
+)
+
+@Serializable
+data class DaemonCollectResultDto(
+    val status: String = "ok",
+    val batch_id: String? = null,
+    val total_players: Int = 0
+)
+
+@Serializable
+data class DeepResetZoneResultDto(
+    val zone_name: String,
+    val ip_address: String,
+    val rincon_uuid: String,
+    val stopped: Boolean,
+    val queue_cleared: Boolean,
+    val coordinator_reset: Boolean,
+    val status: String,
+    val details: String
+)
+
+@Serializable
+data class DeepResetResultDto(
+    val total_targeted: Int,
+    val success_count: Int,
+    val reset_zones: List<String> = emptyList(),
+    val failed_zones: List<String> = emptyList(),
+    val results: List<DeepResetZoneResultDto> = emptyList(),
+    val elapsed_ms: Double,
+    val captured_at: String
+)

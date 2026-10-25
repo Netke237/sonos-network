@@ -2,6 +2,7 @@ import type {
   ConnectionMode,
   DaemonCollectResult,
   DaemonStatus,
+  DeepResetResult,
   DeviceRole,
   GhostFlushResult,
   HealthGrade,
@@ -312,6 +313,20 @@ export async function toggleDaemon(enabled: boolean): Promise<DaemonStatus> {
   );
   if (!resp.ok) {
     throw new Error(`Failed to toggle daemon: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function executeDeepReset(
+  zoneIps?: string[]
+): Promise<DeepResetResult> {
+  const resp = await fetch(`${API_BASE}/api/actions/deep-reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(zoneIps && zoneIps.length > 0 ? { zone_ips: zoneIps } : {}),
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to execute deep reset: ${resp.status}`);
   }
   return resp.json();
 }

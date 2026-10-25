@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import de.wutanglan.sonosnetwork.data.models.*
 
 @Composable
 fun ActionsScreen(
@@ -79,7 +80,80 @@ fun ActionsScreen(
             }
         }
 
-        // Action 1: 1-Click Ghost Group Reset
+        // 24/7 Background Daemon Card
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "🤖 24/7 Telemetry & Auto-Heal",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    val isRunning = state.daemonStatus?.is_running ?: true
+                    Surface(
+                        color = if (isRunning) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = if (isRunning) "● ACTIVE" else "● PAUSED",
+                            color = if (isRunning) Color(0xFF2E7D32) else Color(0xFFC62828),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                Text(
+                    text = "Polls 14 players every ${state.daemonStatus?.interval_sec?.toInt() ?: 60}s, records trends to DB, and auto-flushes ghost groups in the background.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "Completed: ${state.daemonStatus?.total_cycles ?: 0} cycles  |  Auto-Heal: Active",
+                    fontSize = 12.sp,
+                    color = Color.DarkGray
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { viewModel.triggerDaemonCollect() },
+                        enabled = !state.isTriggeringDaemon,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (state.isTriggeringDaemon) {
+                            CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("⚡ Collect Now", fontSize = 12.sp)
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.toggleDaemon() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = if (state.daemonStatus?.is_running == true) "Pause" else "Resume",
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // Action 1: 1-Click Ghost Group Reset (Safe)
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
             shape = RoundedCornerShape(12.dp),
@@ -87,7 +161,7 @@ fun ActionsScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "1-Click Ghost Group Reset",
+                    text = "1-Click Ghost Group Reset (Safe)",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -111,6 +185,45 @@ fun ActionsScreen(
                         Text("Flushing Ghost Groups...")
                     } else {
                         Text("Flush Ghost Groups Now")
+                    }
+                }
+            }
+        }
+
+        // Action 1B: 🚨 Hardcore Deep Reset & Unfreeze
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFDE8E8)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "🚨 Hardcore Deep Reset & Unfreeze",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFC62828)
+                )
+                Text(
+                    text = "For frozen or stuck speakers. Forcibly terminates hung playback threads (Stop), purges corrupted queue buffers (RemoveAllTracks), restores standalone coordinator status, and forces UPnP re-announcement.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFB71C1C)
+                )
+                Button(
+                    onClick = { viewModel.executeDeepReset() },
+                    enabled = !state.isDeepResetting,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (state.isDeepResetting) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Executing Deep Reset...", color = Color.White)
+                    } else {
+                        Text("🚨 Deep Reset Household Now", color = Color.White)
                     }
                 }
             }
@@ -329,6 +442,47 @@ fun ActionsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { viewModel.dismissGhostFlushDialog() }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    // Hardcore Deep Reset Dialog
+    if (state.deepResetDialogVisible) {
+        val result = state.deepResetResult
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissDeepResetDialog() },
+            title = { Text("🚨 Hardcore Deep Reset Finished") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Restored ${result?.success_count ?: 0} / ${result?.total_targeted ?: 0} targeted zones in ${result?.elapsed_ms?.toInt() ?: 0}ms.",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Playback threads terminated, corrupted queues purged, and standalone coordinators restored.",
+                        fontSize = 12.sp,
+                        color = Color.DarkGray
+                    )
+                    if (result != null && result.reset_zones.isNotEmpty()) {
+                        Text(
+                            text = "Zones: ${result.reset_zones.joinToString()}",
+                            fontSize = 11.sp,
+                            color = Color(0xFF2E7D32)
+                        )
+                    }
+                    if (result != null && result.failed_zones.isNotEmpty()) {
+                        Text(
+                            text = "Unresponsive: ${result.failed_zones.joinToString()}",
+                            fontSize = 11.sp,
+                            color = Color(0xFFC62828)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.dismissDeepResetDialog() }) {
                     Text("OK")
                 }
             }

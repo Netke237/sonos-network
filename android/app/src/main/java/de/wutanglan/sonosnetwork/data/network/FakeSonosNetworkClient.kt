@@ -300,6 +300,45 @@ class FakeSonosNetworkClient : SonosNetworkClientPort {
         )
     }
 
+    override suspend fun getDaemonStatus(): Result<DaemonStatusDto> {
+        return Result.success(
+            DaemonStatusDto(
+                is_running = true,
+                interval_sec = 60.0,
+                retention_days = 365,
+                total_cycles = 500
+            )
+        )
+    }
+
+    override suspend fun triggerDaemonCollect(): Result<Unit> {
+        return Result.success(Unit)
+    }
+
+    override suspend fun toggleDaemon(enabled: Boolean): Result<DaemonStatusDto> {
+        return Result.success(
+            DaemonStatusDto(
+                is_running = enabled,
+                interval_sec = 60.0,
+                retention_days = 365,
+                total_cycles = 501
+            )
+        )
+    }
+
+    override suspend fun deepReset(zoneIps: List<String>?): Result<DeepResetResultDto> {
+        return Result.success(
+            DeepResetResultDto(
+                total_targeted = zoneIps?.size ?: 12,
+                success_count = zoneIps?.size ?: 12,
+                reset_zones = zoneIps ?: listOf("Wohnzimmer_Bookshelf"),
+                results = emptyList(),
+                elapsed_ms = 150.0,
+                captured_at = Instant.now().toString()
+            )
+        )
+    }
+
     override fun streamLiveRf(roomSlug: String): Flow<LiveRfFrameDto> = flow {
         var tick = 0
         while (true) {

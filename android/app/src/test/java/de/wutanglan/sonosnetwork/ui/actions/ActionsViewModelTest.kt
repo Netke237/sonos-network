@@ -115,4 +115,48 @@ class ActionsViewModelTest {
         assertNotNull(viewModel.uiState.value.errorMessage)
         assertTrue(viewModel.uiState.value.errorMessage!!.contains("Host unreachable"))
     }
+
+    @Test
+    fun testTriggerDaemonCollectSuccess() = runTest {
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.isTriggeringDaemon)
+
+        viewModel.triggerDaemonCollect()
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.isTriggeringDaemon)
+        assertNotNull(viewModel.uiState.value.pollSuccessMessage)
+        assertTrue(viewModel.uiState.value.pollSuccessMessage!!.contains("Daemon collection cycle completed"))
+    }
+
+    @Test
+    fun testToggleDaemonSuccess() = runTest {
+        advanceUntilIdle()
+        val initialStatus = viewModel.uiState.value.daemonStatus
+        assertNotNull(initialStatus)
+        assertTrue(initialStatus!!.is_running)
+
+        viewModel.toggleDaemon()
+        advanceUntilIdle()
+
+        assertNotNull(viewModel.uiState.value.daemonStatus)
+        assertFalse(viewModel.uiState.value.daemonStatus!!.is_running)
+    }
+
+    @Test
+    fun testExecuteDeepResetSuccess() = runTest {
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.deepResetDialogVisible)
+        assertNull(viewModel.uiState.value.deepResetResult)
+
+        viewModel.executeDeepReset()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.deepResetDialogVisible)
+        assertNotNull(viewModel.uiState.value.deepResetResult)
+        assertEquals(12, viewModel.uiState.value.deepResetResult!!.total_targeted)
+
+        viewModel.dismissDeepResetDialog()
+        assertFalse(viewModel.uiState.value.deepResetDialogVisible)
+    }
 }

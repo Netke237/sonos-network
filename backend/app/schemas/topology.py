@@ -310,6 +310,32 @@ class GhostFlushResult(BaseModel):
     captured_at: datetime
 
 
+class DeepResetRequest(BaseModel):
+    zone_ips: list[str] | None = None
+    room_slug: str | None = None
+
+
+class DeepResetZoneResult(BaseModel):
+    zone_name: str
+    ip_address: str
+    rincon_uuid: str
+    stopped: bool
+    queue_cleared: bool
+    coordinator_reset: bool
+    status: str
+    details: str
+
+
+class DeepResetResult(BaseModel):
+    total_targeted: int
+    success_count: int
+    reset_zones: list[str]
+    failed_zones: list[str] = []
+    results: list[DeepResetZoneResult]
+    elapsed_ms: float
+    captured_at: datetime
+
+
 class PlayerRfSample(BaseModel):
     rincon_uuid: str
     zone_name: str

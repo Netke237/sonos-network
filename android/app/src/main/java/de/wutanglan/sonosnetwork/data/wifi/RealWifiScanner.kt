@@ -191,8 +191,9 @@ class RealWifiScanner(
         // Add a 500ms safety window in case hardware clock slightly desynchronized
         val freshnessThresholdMicros = probeStartTimeMicros - 500_000L
         val freshScanResults = rawResults.filter { it.timestamp >= freshnessThresholdMicros }
+        val targetResults = if (freshScanResults.isNotEmpty()) freshScanResults else rawResults
 
-        val readings = freshScanResults.map { sr ->
+        val readings = targetResults.map { sr ->
             val primaryCh = WifiFrequencyMapper.frequencyToChannel(sr.frequency)
             val centerCh = WifiFrequencyMapper.centerFrequencyToChannel(sr.centerFreq0, primaryCh)
             val band = WifiFrequencyMapper.frequencyToBand(sr.frequency)

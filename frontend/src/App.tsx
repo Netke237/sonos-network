@@ -12,6 +12,7 @@ import {
   fetchRoomHistory,
   fetchRoomSurveys,
   fetchSurveyDelta,
+  executeDeepReset,
   flushGhostGroups,
   pollLiveSonosNow,
   runPingSweep,
@@ -24,6 +25,7 @@ import { LiveWaveformOscilloscope } from "./components/LiveWaveformOscilloscope"
 import { PlainLanguageAdvisorModal } from "./components/PlainLanguageAdvisorModal";
 import { InstallModal } from "./components/InstallModal";
 import { YearlyHistoricalVisualizer } from "./components/YearlyHistoricalVisualizer";
+import { OperationsHubView } from "./components/OperationsHubView";
 import type {
   BssidClassification,
   ConnectionMode,
@@ -64,7 +66,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [includeArchived, setIncludeArchived] = useState<boolean>(false);
   const [crudOpen, setCrudOpen] = useState<boolean>(false);
-  const [activeViewTab, setActiveViewTab] = useState<"MATRIX" | "GRAPH" | "LIVE_RF">("MATRIX");
+  const [activeViewTab, setActiveViewTab] = useState<"MATRIX" | "GRAPH" | "LIVE_RF" | "OPERATIONS">("MATRIX");
   const [selectedRoom, setSelectedRoom] = useState<RoomMatrixItem | null>(null);
   const [roomSurveys, setRoomSurveys] = useState<WiFiRoomSurvey[]>([]);
   const [selectedDiagnosticRoom, setSelectedDiagnosticRoom] = useState<RoomMatrixItem | null>(null);
@@ -513,7 +515,7 @@ export default function App() {
     await loadData(includeArchived);
   };
 
-  const sortedFloors: FloorMatrixItem[] = overview
+  const sortedFloors: FloorMatrixItem[] = (overview && Array.isArray(overview.floors))
     ? [...overview.floors].sort((a, b) => b.level_order - a.level_order)
     : [];
 
@@ -1342,12 +1344,42 @@ export default function App() {
         >
           Live RF &amp; EMI Isolation Console
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveViewTab("OPERATIONS")}
+          style={{
+            backgroundColor: activeViewTab === "OPERATIONS" ? "#0284c7" : "#1e293b",
+            color: "#f8fafc",
+            border: "1px solid #38bdf8",
+            borderRadius: "8px",
+            padding: "8px 16px",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          ⚡ Operations & Unclog Hub
+        </button>
       </nav>
 
       {loading && <p>Loading house topology...</p>}
       {error && <p style={{ color: "#f87171" }}>Error: {error}</p>}
 
-      {activeViewTab === "LIVE_RF" ? (
+      {activeViewTab === "OPERATIONS" ? (
+        <OperationsHubView
+          daemonStatus={daemonStatus}
+          onRefreshDaemon={async () => {
+            const s = await fetchDaemonStatus();
+            setDaemonStatus(s);
+          }}
+          onToggleDaemon={handleToggleDaemon}
+          onTriggerDaemonCycle={handleTriggerDaemonCollect}
+          onFlushGhostGroups={flushGhostGroups}
+          onPollLiveMesh={pollLiveSonosNow}
+          onRunPingSweep={runPingSweep}
+          onExecuteDeepReset={executeDeepReset}
+          allRooms={allRooms}
+        />
+      ) : activeViewTab === "LIVE_RF" ? (
         <section
           role="region"
           aria-label="Live RF and EMI Isolation Console"
@@ -2522,6 +2554,133 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {/* Room Audio Quick Remediation Toolbar */}
+              {(() => {
+                const roomPlayerIps = (
+                  roomDiagnostics?.sonos_pillar.players?.map((p) => p.ip_address) ??
+                  selectedDiagnosticRoom?.devices?.map((d) => d.ip_address) ??
+                  []
+                ).filter((ip): ip is string => Boolean(ip));
+
+                if (roomPlayerIps.length === 0) return null;
+
+                return (
+                  <div
+                    style={{
+                      backgroundColor: "#091426",
+                      border: "1px solid #38bdf8",
+                      borderRadius: "8px",
+                      padding: "16px",
+                      marginTop: "16px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: "10px",
+                        flexWrap: "wrap",
+                        gap: "8px",
+                      }}
+                    >
+                      <h4
+                        style={{
+                          margin: 0,
+                          fontSize: "0.95rem",
+                          color: "#38bdf8",
+                          fontWeight: 700,
+                        }}
+                      >
+                        ⚡ Room Audio Remediation Toolbar
+                      </h4>
+                      <span style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
+                        Targeting: {roomPlayerIps.join(", ")}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        disabled={Boolean(busyAction)}
+                        onClick={async () => {
+                          setBusyAction("room-soft-unclog");
+                          setBusyMessage(`Flushing ghost groups for ${selectedDiagnosticRoom?.name}...`);
+                          try {
+                            const res = await flushGhostGroups(roomPlayerIps);
+                            setActionBanner(`🧹 Room Unclogged: Flushed ${res.flushed_count} ghost groups in ${selectedDiagnosticRoom?.name}`);
+                            await loadData();
+                            if (selectedDiagnosticRoom) {
+                              await handleOpenRoomDiagnostics(selectedDiagnosticRoom);
+                            }
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : "Failed room ghost flush");
+                          } finally {
+                            setBusyAction(null);
+                            setBusyMessage(null);
+                          }
+                        }}
+                        style={{
+                          backgroundColor: "#0284c7",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: "6px",
+                          padding: "8px 14px",
+                          fontSize: "0.82rem",
+                          fontWeight: 700,
+                          cursor: busyAction ? "not-allowed" : "pointer",
+                          opacity: busyAction ? 0.6 : 1,
+                        }}
+                      >
+                        🧹 Soft Unclog (Ghost Flush)
+                      </button>
+                      <button
+                        type="button"
+                        disabled={Boolean(busyAction)}
+                        onClick={async () => {
+                          if (
+                            !window.confirm(
+                              `Execute Hardcore Deep Reset on ${selectedDiagnosticRoom?.name} (${roomPlayerIps.join(", ")})?\n\nThis will stop playback, clear queues, and force standalone coordinator status.`
+                            )
+                          ) {
+                            return;
+                          }
+                          setBusyAction("room-deep-reset");
+                          setBusyMessage(`Executing Deep Reset for ${selectedDiagnosticRoom?.name}...`);
+                          try {
+                            const res = await executeDeepReset(roomPlayerIps);
+                            setActionBanner(
+                              `🚨 Deep Reset Complete for ${selectedDiagnosticRoom?.name}: ${res.total_targeted} speakers reset.`
+                            );
+                            await loadData();
+                            if (selectedDiagnosticRoom) {
+                              await handleOpenRoomDiagnostics(selectedDiagnosticRoom);
+                            }
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : "Failed room deep reset");
+                          } finally {
+                            setBusyAction(null);
+                            setBusyMessage(null);
+                          }
+                        }}
+                        style={{
+                          backgroundColor: "#b91c1c",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: "6px",
+                          padding: "8px 14px",
+                          fontSize: "0.82rem",
+                          fontWeight: 700,
+                          cursor: busyAction ? "not-allowed" : "pointer",
+                          opacity: busyAction ? 0.6 : 1,
+                        }}
+                      >
+                        🚨 Deep Reset &amp; Unfreeze
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </section>

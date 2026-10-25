@@ -18,9 +18,9 @@ import kotlin.coroutines.resume
 class RealSonosNetworkClient(
     private val connectivityPort: ConnectivityPort,
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .build(),
     private val json: Json = Json {
         ignoreUnknownKeys = true
@@ -146,6 +146,31 @@ class RealSonosNetworkClient(
         val url = "${baseUrl()}/api/actions/ping-sweep"
         val emptyBody = "{}".toRequestBody(jsonMediaType)
         return executePost(url, emptyBody)
+    }
+
+    override suspend fun getDaemonStatus(): Result<DaemonStatusDto> {
+        val url = "${baseUrl()}/api/daemon/status"
+        return executeGet(url)
+    }
+
+    override suspend fun triggerDaemonCollect(): Result<Unit> {
+        val url = "${baseUrl()}/api/daemon/collect-now"
+        val emptyBody = "{}".toRequestBody(jsonMediaType)
+        return executePost<DaemonCollectResultDto>(url, emptyBody).map { }
+    }
+
+    override suspend fun toggleDaemon(enabled: Boolean): Result<DaemonStatusDto> {
+        val url = "${baseUrl()}/api/daemon/toggle?enabled=$enabled"
+        val emptyBody = "{}".toRequestBody(jsonMediaType)
+        return executePost(url, emptyBody)
+    }
+
+    override suspend fun deepReset(zoneIps: List<String>?): Result<DeepResetResultDto> {
+        val url = "${baseUrl()}/api/actions/deep-reset"
+        val payloadObj = if (zoneIps != null) mapOf("zone_ips" to zoneIps) else emptyMap()
+        val bodyJson = json.encodeToString(payloadObj)
+        val body = bodyJson.toRequestBody(jsonMediaType)
+        return executePost(url, body)
     }
 
     override fun streamLiveRf(roomSlug: String): Flow<LiveRfFrameDto> = callbackFlow {

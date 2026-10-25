@@ -25,6 +25,8 @@ data class HouseHealthUiState(
     val selectedRoomDiagnostic: RoomDiagnosticSummaryDto? = null,
     val isDiagnosticSheetOpen: Boolean = false,
     val isLoadingRoomDiagnostic: Boolean = false,
+    val isRemediating: Boolean = false,
+    val remediationMessage: String? = null,
     val errorMessage: String? = null
 )
 
@@ -100,7 +102,67 @@ class HouseHealthViewModel(
     }
 
     fun closeDiagnosticSheet() {
-        _uiState.value = _uiState.value.copy(isDiagnosticSheetOpen = false)
+        _uiState.value = _uiState.value.copy(
+            isDiagnosticSheetOpen = false,
+            remediationMessage = null
+        )
+    }
+
+    fun flushGhostGroupsForIps(zoneIps: List<String>) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isRemediating = true, remediationMessage = null)
+            val result = networkClient.flushGhostGroups(zoneIps)
+            if (result.isSuccess) {
+                val data = result.getOrNull()
+                _uiState.value = _uiState.value.copy(
+                    isRemediating = false,
+                    remediationMessage = "✓ Ghost group flushed (${data?.flushed_zones?.size ?: 0} zones)"
+                )
+                loadHealthData()
+                _uiState.value.selectedRoomDiagnostic?.let { currentRoom ->
+                    val refreshRoom = networkClient.getRoomDiagnostics(currentRoom.room_slug)
+                    if (refreshRoom.isSuccess) {
+                        _uiState.value = _uiState.value.copy(selectedRoomDiagnostic = refreshRoom.getOrNull())
+                    }
+                }
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    isRemediating = false,
+                    remediationMessage = "✗ Flush failed: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    fun deepResetForIps(zoneIps: List<String>) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isRemediating = true, remediationMessage = null)
+            val result = networkClient.deepReset(zoneIps)
+            if (result.isSuccess) {
+                val data = result.getOrNull()
+                val successCount = data?.results?.count { it.status == "RESET_SUCCESS" } ?: 0
+                _uiState.value = _uiState.value.copy(
+                    isRemediating = false,
+                    remediationMessage = "✓ Deep reset complete: $successCount zone(s) unfrozen (${data?.elapsed_ms?.let { String.format("%.0f ms", it) } ?: "done"})"
+                )
+                loadHealthData()
+                _uiState.value.selectedRoomDiagnostic?.let { currentRoom ->
+                    val refreshRoom = networkClient.getRoomDiagnostics(currentRoom.room_slug)
+                    if (refreshRoom.isSuccess) {
+                        _uiState.value = _uiState.value.copy(selectedRoomDiagnostic = refreshRoom.getOrNull())
+                    }
+                }
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    isRemediating = false,
+                    remediationMessage = "✗ Deep reset failed: ${result.exceptionOrNull()?.message}"
+                )
+            }
+        }
+    }
+
+    fun clearRemediationMessage() {
+        _uiState.value = _uiState.value.copy(remediationMessage = null)
     }
 
     fun clearError() {

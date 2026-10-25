@@ -1,5 +1,6 @@
 package de.wutanglan.sonosnetwork.ui.health
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,6 +23,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.time.Duration
+import java.time.Instant
 import de.wutanglan.sonosnetwork.data.models.FloorMatrixItemDto
 import de.wutanglan.sonosnetwork.data.models.RoomMatrixItemDto
 import de.wutanglan.sonosnetwork.data.models.TopologyGraphDto
@@ -92,7 +95,7 @@ fun HouseHealthScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Household Health: $overallGrade",
                         fontWeight = FontWeight.Bold,
@@ -104,8 +107,34 @@ fun HouseHealthScreen(
                         fontSize = 11.sp,
                         color = Color.DarkGray
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val sonosFreshness = overview?.latest_sonos_captured_at?.let { formatRelativeTime(it) } ?: "just now"
+                    Surface(
+                        color = Color.White.copy(alpha = 0.85f),
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(0.5.dp, Color.LightGray)
+                    ) {
+                        Text(
+                            text = "🕒 Sonos telemetry: $sonosFreshness",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF333333),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 }
-                HealthGradeBadge(overallGrade)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IconButton(
+                        onClick = { viewModel.loadHealthData() },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Text("🔄", fontSize = 16.sp)
+                    }
+                    HealthGradeBadge(overallGrade)
+                }
             }
         }
 
@@ -144,6 +173,10 @@ fun HouseHealthScreen(
         RoomDiagnosticModalSheet(
             diagnostic = state.selectedRoomDiagnostic,
             isLoading = state.isLoadingRoomDiagnostic,
+            isRemediating = state.isRemediating,
+            remediationMessage = state.remediationMessage,
+            onFlushGhostGroups = { ips -> viewModel.flushGhostGroupsForIps(ips) },
+            onDeepReset = { ips -> viewModel.deepResetForIps(ips) },
             onDismiss = { viewModel.closeDiagnosticSheet() }
         )
     }
@@ -201,7 +234,7 @@ fun RoomItemCard(
             .fillMaxWidth()
             .clickable(onClick = onClick)
     ) {
-        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -217,6 +250,21 @@ fun RoomItemCard(
                 color = Color.DarkGray
             )
 
+            // 3-Pillar Status Badges
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PillarBadge(label = "Wi-Fi", grade = room.wifi_health_grade)
+                if (room.devices.any { it.device_role == "SONOS_PLAYER" }) {
+                    PillarBadge(label = "Sonos", grade = room.sonos_health_grade)
+                }
+                if (room.switch_ports.isNotEmpty()) {
+                    PillarBadge(label = "VLAN 10", grade = room.wired_health_grade)
+                }
+            }
+
             Text(
                 text = "Tap to inspect 3-Pillar Diagnostics & Proposals →",
                 fontSize = 11.sp,
@@ -224,6 +272,54 @@ fun RoomItemCard(
                 fontWeight = FontWeight.Medium
             )
         }
+    }
+}
+
+@Composable
+fun PillarBadge(label: String, grade: String) {
+    val (bg, fg) = when (grade.uppercase()) {
+        "EXCELLENT" -> Color(0xFFE8F5E9) to Color(0xFF2E7D32)
+        "GOOD" -> Color(0xFFE3F2FD) to Color(0xFF1565C0)
+        "MARGINAL" -> Color(0xFFFFF3E0) to Color(0xFFE65100)
+        else -> Color(0xFFFFEBEE) to Color(0xFFC62828)
+    }
+
+    val icon = when (label) {
+        "Wi-Fi" -> "📶"
+        "Sonos" -> "🔊"
+        else -> "🔌"
+    }
+
+    Surface(
+        color = bg,
+        shape = RoundedCornerShape(4.dp),
+        border = BorderStroke(0.5.dp, fg.copy(alpha = 0.35f))
+    ) {
+        Text(
+            text = "$icon $label: ${grade.uppercase()}",
+            color = fg,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 10.sp,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+private fun formatRelativeTime(isoString: String?): String {
+    if (isoString.isNullOrBlank()) return "just now"
+    return try {
+        val instant = Instant.parse(isoString)
+        val now = Instant.now()
+        val seconds = Duration.between(instant, now).seconds
+        when {
+            seconds < 5 -> "just now"
+            seconds < 60 -> "${seconds}s ago"
+            seconds < 3600 -> "${seconds / 60}m ago"
+            seconds < 86400 -> "${seconds / 3600}h ago"
+            else -> "${seconds / 86400}d ago"
+        }
+    } catch (e: Exception) {
+        "recently"
     }
 }
 

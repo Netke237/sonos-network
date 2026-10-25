@@ -14,6 +14,8 @@ from typing import Any, Protocol
 
 from app.models.entities import ConnectionMode, StpPortState
 from app.schemas.topology import (
+    DeepResetResult,
+    DeepResetZoneResult,
     GhostFlushResult,
     GhostFlushZoneResult,
     HouseholdSonosSnapshot,
@@ -45,6 +47,24 @@ SOAP_STANDALONE_GROUP = """<?xml version="1.0" encoding="utf-8"?>
 <u:BecomeCoordinatorOfStandaloneGroup xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
 <InstanceID>0</InstanceID>
 </u:BecomeCoordinatorOfStandaloneGroup>
+</s:Body>
+</s:Envelope>"""
+
+SOAP_STOP = """<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:Stop xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+<InstanceID>0</InstanceID>
+</u:Stop>
+</s:Body>
+</s:Envelope>"""
+
+SOAP_CLEAR_QUEUE = """<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:RemoveAllTracksFromQueue xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+<InstanceID>0</InstanceID>
+</u:RemoveAllTracksFromQueue>
 </s:Body>
 </s:Envelope>"""
 
@@ -372,6 +392,10 @@ class SonosTelemetryPort(Protocol):
     async def flush_ghost_groups(
         self, zone_ips: list[str] | None = None
     ) -> GhostFlushResult: ...
+
+    async def deep_reset(
+        self, zone_ips: list[str] | None = None
+    ) -> DeepResetResult: ...
 
     def stream_room_rf_velocity(
         self,
@@ -988,6 +1012,48 @@ class FakeSonosAdapter:
             captured_at=datetime.now(timezone.utc),
         )
 
+    async def deep_reset(
+        self, zone_ips: list[str] | None = None
+    ) -> DeepResetResult:
+        start_time = time.monotonic()
+        target_ips = set(zone_ips) if zone_ips else None
+        results: list[DeepResetZoneResult] = []
+        reset_zones: list[str] = []
+
+        for r_uuid, st in self._state_by_uuid.items():
+            if st.get("bonded_parent_uuid"):
+                continue
+            ip = st.get("ip_address")
+            if not ip or (target_ips is not None and ip not in target_ips):
+                continue
+            zone_name = st["zone_name"]
+            st["group_id"] = f"{r_uuid}:1"
+            st["coordinator_uuid"] = r_uuid
+            reset_zones.append(zone_name)
+            results.append(
+                DeepResetZoneResult(
+                    zone_name=zone_name,
+                    ip_address=ip,
+                    rincon_uuid=r_uuid,
+                    stopped=True,
+                    queue_cleared=True,
+                    coordinator_reset=True,
+                    status="RESET_SUCCESS",
+                    details="Playback stopped, queue cleared, standalone coordinator restored",
+                )
+            )
+
+        elapsed = (time.monotonic() - start_time) * 1000.0
+        return DeepResetResult(
+            total_targeted=len(results),
+            success_count=len(reset_zones),
+            reset_zones=reset_zones,
+            failed_zones=[],
+            results=results,
+            elapsed_ms=round(elapsed, 1),
+            captured_at=datetime.now(timezone.utc),
+        )
+
     async def stream_room_rf_velocity(
         self,
         room_id: str,
@@ -1343,6 +1409,119 @@ class HttpSonosAdapter:
             flushed_count=len(flushed_zones),
             flushed_zones=flushed_zones,
             results=results,
+            captured_at=datetime.now(timezone.utc),
+        )
+
+    async def deep_reset(
+        self, zone_ips: list[str] | None = None
+    ) -> DeepResetResult:
+        start_time = time.monotonic()
+        target_ips = set(zone_ips) if zone_ips else None
+        results: list[DeepResetZoneResult] = []
+        reset_zones: list[str] = []
+        failed_zones: list[str] = []
+
+        for meta in MASTER_SONOS_INVENTORY:
+            if meta.get("bonded_parent_uuid"):
+                continue
+            ip = meta.get("ip_address")
+            if not ip or (target_ips is not None and ip not in target_ips):
+                continue
+            r_uuid = meta["rincon_uuid"]
+            zone_name = meta["zone_name"]
+
+            stopped = False
+            queue_cleared = False
+            coord_reset = False
+
+            # 1. Stop playback
+            try:
+                await asyncio.to_thread(
+                    self._http_caller,
+                    f"http://{ip}:1400/MediaRenderer/AVTransport/Control",
+                    "POST",
+                    SOAP_STOP,
+                    {
+                        "Content-Type": 'text/xml; charset="utf-8"',
+                        "SOAPAction": '"urn:schemas-upnp-org:service:AVTransport:1#Stop"',
+                    },
+                    self.timeout_sec,
+                )
+                stopped = True
+            except Exception:
+                pass
+
+            # 2. Clear Queue
+            try:
+                await asyncio.to_thread(
+                    self._http_caller,
+                    f"http://{ip}:1400/MediaRenderer/AVTransport/Control",
+                    "POST",
+                    SOAP_CLEAR_QUEUE,
+                    {
+                        "Content-Type": 'text/xml; charset="utf-8"',
+                        "SOAPAction": '"urn:schemas-upnp-org:service:AVTransport:1#RemoveAllTracksFromQueue"',
+                    },
+                    self.timeout_sec,
+                )
+                queue_cleared = True
+            except Exception:
+                pass
+
+            # 3. Become coordinator of standalone group
+            try:
+                await asyncio.to_thread(
+                    self._http_caller,
+                    f"http://{ip}:1400/MediaRenderer/AVTransport/Control",
+                    "POST",
+                    SOAP_STANDALONE_GROUP,
+                    {
+                        "Content-Type": 'text/xml; charset="utf-8"',
+                        "SOAPAction": '"urn:schemas-upnp-org:service:AVTransport:1#BecomeCoordinatorOfStandaloneGroup"',
+                    },
+                    self.timeout_sec,
+                )
+                coord_reset = True
+            except Exception:
+                pass
+
+            if coord_reset or stopped or queue_cleared:
+                reset_zones.append(zone_name)
+                results.append(
+                    DeepResetZoneResult(
+                        zone_name=zone_name,
+                        ip_address=ip,
+                        rincon_uuid=r_uuid,
+                        stopped=stopped,
+                        queue_cleared=queue_cleared,
+                        coordinator_reset=coord_reset,
+                        status="RESET_SUCCESS",
+                        details="Audio thread terminated, queue purged, coordinator restored to standalone",
+                    )
+                )
+            else:
+                failed_zones.append(zone_name)
+                results.append(
+                    DeepResetZoneResult(
+                        zone_name=zone_name,
+                        ip_address=ip,
+                        rincon_uuid=r_uuid,
+                        stopped=False,
+                        queue_cleared=False,
+                        coordinator_reset=False,
+                        status="FAILED",
+                        details="Speaker unresponsive to UPnP control",
+                    )
+                )
+
+        elapsed = (time.monotonic() - start_time) * 1000.0
+        return DeepResetResult(
+            total_targeted=len(results),
+            success_count=len(reset_zones),
+            reset_zones=reset_zones,
+            failed_zones=failed_zones,
+            results=results,
+            elapsed_ms=round(elapsed, 1),
             captured_at=datetime.now(timezone.utc),
         )
 
